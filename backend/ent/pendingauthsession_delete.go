@@ -8,8 +8,8 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
-	"github.com/Wei-Shaw/sub2api/ent/pendingauthsession"
-	"github.com/Wei-Shaw/sub2api/ent/predicate"
+	"github.com/JnyRoad/RelayDeck/ent/pendingauthsession"
+	"github.com/JnyRoad/RelayDeck/ent/predicate"
 )
 
 // PendingAuthSessionDelete is the builder for deleting a PendingAuthSession entity.

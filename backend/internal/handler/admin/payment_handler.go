@@ -4,9 +4,9 @@ import (
 	"strconv"
 	"time"
 
-	dbent "github.com/Wei-Shaw/sub2api/ent"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
-	"github.com/Wei-Shaw/sub2api/internal/service"
+	dbent "github.com/JnyRoad/RelayDeck/ent"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/response"
+	"github.com/JnyRoad/RelayDeck/internal/service"
 
 	"github.com/gin-gonic/gin"
 )

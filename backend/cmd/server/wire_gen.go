@@ -8,16 +8,16 @@ package main
 
 import (
 	"context"
-	"github.com/Wei-Shaw/sub2api/ent"
-	"github.com/Wei-Shaw/sub2api/internal/config"
-	"github.com/Wei-Shaw/sub2api/internal/handler"
-	"github.com/Wei-Shaw/sub2api/internal/handler/admin"
-	"github.com/Wei-Shaw/sub2api/internal/payment"
-	"github.com/Wei-Shaw/sub2api/internal/repository"
-	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
-	"github.com/Wei-Shaw/sub2api/internal/server"
-	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
-	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/JnyRoad/RelayDeck/ent"
+	"github.com/JnyRoad/RelayDeck/internal/config"
+	"github.com/JnyRoad/RelayDeck/internal/handler"
+	"github.com/JnyRoad/RelayDeck/internal/handler/admin"
+	"github.com/JnyRoad/RelayDeck/internal/payment"
+	"github.com/JnyRoad/RelayDeck/internal/repository"
+	"github.com/JnyRoad/RelayDeck/internal/securityaudit"
+	"github.com/JnyRoad/RelayDeck/internal/server"
+	"github.com/JnyRoad/RelayDeck/internal/server/middleware"
+	"github.com/JnyRoad/RelayDeck/internal/service"
 	"github.com/redis/go-redis/v9"
 	"log"
 	"net/http"
@@ -27,7 +27,7 @@ import (
 
 import (
 	_ "embed"
-	_ "github.com/Wei-Shaw/sub2api/ent/runtime"
+	_ "github.com/JnyRoad/RelayDeck/ent/runtime"
 )
 
 // Injectors from wire.go:

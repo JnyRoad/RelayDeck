@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	dbent "github.com/Wei-Shaw/sub2api/ent"
-	"github.com/Wei-Shaw/sub2api/ent/authidentity"
-	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	dbent "github.com/JnyRoad/RelayDeck/ent"
+	"github.com/JnyRoad/RelayDeck/ent/authidentity"
+	infraerrors "github.com/JnyRoad/RelayDeck/internal/pkg/errors"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/logger"
 )
 
 // BindEmailIdentity verifies and binds a local email/password identity to the
@@ -123,7 +123,7 @@ func (s *AuthService) SendEmailIdentityBindCode(ctx context.Context, userID int6
 		return err
 	}
 
-	siteName := "Sub2API"
+	siteName := "RelayDeck"
 	if s.settingService != nil {
 		siteName = s.settingService.GetSiteName(ctx)
 	}

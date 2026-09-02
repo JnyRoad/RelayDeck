@@ -6,10 +6,10 @@ import (
 	"log/slog"
 	"strings"
 
-	dbent "github.com/Wei-Shaw/sub2api/ent"
-	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
-	"github.com/Wei-Shaw/sub2api/ent/paymentproviderinstance"
-	"github.com/Wei-Shaw/sub2api/internal/payment"
+	dbent "github.com/JnyRoad/RelayDeck/ent"
+	"github.com/JnyRoad/RelayDeck/ent/paymentorder"
+	"github.com/JnyRoad/RelayDeck/ent/paymentproviderinstance"
+	"github.com/JnyRoad/RelayDeck/internal/payment"
 )
 
 // GetWebhookProvider returns the provider instance that should verify a webhook.

@@ -17,10 +17,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/config"
-	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
+	"github.com/JnyRoad/RelayDeck/internal/config"
+	infraerrors "github.com/JnyRoad/RelayDeck/internal/pkg/errors"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/openai"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/tlsfingerprint"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/http2"
 )
@@ -330,7 +330,7 @@ func TestNewConfiguredCodexModelDescriptorUsesProviderMetadataAndSafeFallback(t 
 
 	gpt56 := newConfiguredCodexModelDescriptor("gpt-5.6-sol")
 	require.Equal(t, "GPT-5.6 Sol", gpt56.DisplayName)
-	require.Equal(t, "OpenAI GPT coding model routed through Sub2API.", gpt56.Description)
+	require.Equal(t, "OpenAI GPT coding model routed through RelayDeck.", gpt56.Description)
 	require.NotNil(t, gpt56.DefaultReasoningLevel)
 	require.Equal(t, "low", *gpt56.DefaultReasoningLevel)
 	require.Equal(t, configuredCodexGPTReasoningLevels("gpt-5.6-sol"), gpt56.SupportedReasoningLevels)
@@ -857,7 +857,7 @@ func TestBuildCodexModelsManifestForGroupUsesMappedTargetMetadataForCompositeAli
 	require.Len(t, models, 1)
 	require.Equal(t, "reasoning-alias", models[0]["slug"])
 	require.Equal(t, "reasoning-alias", models[0]["display_name"])
-	require.Equal(t, "Custom model routed through Sub2API.", models[0]["description"])
+	require.Equal(t, "Custom model routed through RelayDeck.", models[0]["description"])
 	require.Equal(t, []string{"low", "medium", "high", "xhigh", "max"}, effortsFromManifestModel(t, models[0]))
 }
 
@@ -899,7 +899,7 @@ func TestBuildCodexModelsManifestForGroupUsesSafeFallbackForConflictingAliasTarg
 	require.Len(t, models, 1)
 	require.Equal(t, "shared-alias", models[0]["slug"])
 	require.Equal(t, "shared-alias", models[0]["display_name"])
-	require.Equal(t, "Custom model routed through Sub2API.", models[0]["description"])
+	require.Equal(t, "Custom model routed through RelayDeck.", models[0]["description"])
 	require.Empty(t, effortsFromManifestModel(t, models[0]))
 }
 

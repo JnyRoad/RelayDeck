@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/config"
-	"github.com/Wei-Shaw/sub2api/internal/domain"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
+	"github.com/JnyRoad/RelayDeck/internal/config"
+	"github.com/JnyRoad/RelayDeck/internal/domain"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/xai"
 	"github.com/stretchr/testify/require"
 )
 

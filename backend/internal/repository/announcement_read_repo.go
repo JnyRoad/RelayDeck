@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	dbent "github.com/Wei-Shaw/sub2api/ent"
-	"github.com/Wei-Shaw/sub2api/ent/announcementread"
-	"github.com/Wei-Shaw/sub2api/internal/service"
+	dbent "github.com/JnyRoad/RelayDeck/ent"
+	"github.com/JnyRoad/RelayDeck/ent/announcementread"
+	"github.com/JnyRoad/RelayDeck/internal/service"
 )
 
 type announcementReadRepository struct {

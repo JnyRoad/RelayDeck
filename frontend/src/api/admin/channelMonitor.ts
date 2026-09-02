@@ -256,7 +256,7 @@ function duplicateOperationScope(id: number): DuplicateOperationScope | null {
 
   return {
     adminID,
-    key: `sub2api:admin:channel-monitor-duplicate:${adminID}:${id}`,
+    key: `relaydeck:admin:channel-monitor-duplicate:${adminID}:${id}`,
   }
 }
 

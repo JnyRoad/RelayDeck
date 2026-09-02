@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Wei-Shaw/sub2api/internal/config"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/googleapi"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
-	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/JnyRoad/RelayDeck/internal/config"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/googleapi"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/ip"
+	"github.com/JnyRoad/RelayDeck/internal/service"
 
 	"github.com/gin-gonic/gin"
 )

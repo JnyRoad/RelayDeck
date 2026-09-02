@@ -13,11 +13,11 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
-	"github.com/Wei-Shaw/sub2api/ent/authidentity"
-	"github.com/Wei-Shaw/sub2api/ent/authidentitychannel"
-	"github.com/Wei-Shaw/sub2api/ent/identityadoptiondecision"
-	"github.com/Wei-Shaw/sub2api/ent/predicate"
-	"github.com/Wei-Shaw/sub2api/ent/user"
+	"github.com/JnyRoad/RelayDeck/ent/authidentity"
+	"github.com/JnyRoad/RelayDeck/ent/authidentitychannel"
+	"github.com/JnyRoad/RelayDeck/ent/identityadoptiondecision"
+	"github.com/JnyRoad/RelayDeck/ent/predicate"
+	"github.com/JnyRoad/RelayDeck/ent/user"
 )
 
 // AuthIdentityQuery is the builder for querying AuthIdentity entities.

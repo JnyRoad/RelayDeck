@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/logger"
 	"strings"
 	"time"
 )

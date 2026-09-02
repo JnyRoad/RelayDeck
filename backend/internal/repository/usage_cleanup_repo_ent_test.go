@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	dbent "github.com/Wei-Shaw/sub2api/ent"
-	"github.com/Wei-Shaw/sub2api/ent/enttest"
-	dbusagecleanuptask "github.com/Wei-Shaw/sub2api/ent/usagecleanuptask"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
-	"github.com/Wei-Shaw/sub2api/internal/service"
+	dbent "github.com/JnyRoad/RelayDeck/ent"
+	"github.com/JnyRoad/RelayDeck/ent/enttest"
+	dbusagecleanuptask "github.com/JnyRoad/RelayDeck/ent/usagecleanuptask"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/pagination"
+	"github.com/JnyRoad/RelayDeck/internal/service"
 	"github.com/stretchr/testify/require"
 
 	"entgo.io/ent/dialect"

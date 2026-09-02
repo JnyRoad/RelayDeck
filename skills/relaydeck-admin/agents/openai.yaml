@@ -1,0 +1,7 @@
+interface:
+  display_name: "RelayDeck Admin"
+  short_description: "Manage RelayDeck admin accounts and settings"
+  default_prompt: "Use $relaydeck-admin to inspect and manage RelayDeck backend accounts safely."
+
+policy:
+  allow_implicit_invocation: true

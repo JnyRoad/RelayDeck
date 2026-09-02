@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/oauth"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyurl"
-	"github.com/Wei-Shaw/sub2api/internal/service"
-	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/logger"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/oauth"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/proxyurl"
+	"github.com/JnyRoad/RelayDeck/internal/service"
+	"github.com/JnyRoad/RelayDeck/internal/util/logredact"
 
 	"github.com/imroc/req/v3"
 )

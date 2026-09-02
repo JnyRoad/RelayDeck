@@ -6,10 +6,10 @@ import (
 	"context"
 	"testing"
 
-	dbent "github.com/Wei-Shaw/sub2api/ent"
-	"github.com/Wei-Shaw/sub2api/ent/channelmonitor"
-	"github.com/Wei-Shaw/sub2api/ent/channelmonitorrequesttemplate"
-	"github.com/Wei-Shaw/sub2api/internal/service"
+	dbent "github.com/JnyRoad/RelayDeck/ent"
+	"github.com/JnyRoad/RelayDeck/ent/channelmonitor"
+	"github.com/JnyRoad/RelayDeck/ent/channelmonitorrequesttemplate"
+	"github.com/JnyRoad/RelayDeck/internal/service"
 	"github.com/stretchr/testify/require"
 )
 

@@ -4,14 +4,14 @@ import (
 	"context"
 	"time"
 
-	dbent "github.com/Wei-Shaw/sub2api/ent"
-	"github.com/Wei-Shaw/sub2api/ent/group"
-	"github.com/Wei-Shaw/sub2api/ent/predicate"
-	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
-	"github.com/Wei-Shaw/sub2api/ent/user"
-	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
-	"github.com/Wei-Shaw/sub2api/internal/service"
+	dbent "github.com/JnyRoad/RelayDeck/ent"
+	"github.com/JnyRoad/RelayDeck/ent/group"
+	"github.com/JnyRoad/RelayDeck/ent/predicate"
+	"github.com/JnyRoad/RelayDeck/ent/schema/mixins"
+	"github.com/JnyRoad/RelayDeck/ent/user"
+	"github.com/JnyRoad/RelayDeck/ent/usersubscription"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/pagination"
+	"github.com/JnyRoad/RelayDeck/internal/service"
 )
 
 type userSubscriptionRepository struct {

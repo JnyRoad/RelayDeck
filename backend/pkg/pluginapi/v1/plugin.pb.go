@@ -1119,103 +1119,7 @@ func (*ForwardResponse_Error) isForwardResponse_Frame() {}
 
 var File_plugin_proto protoreflect.FileDescriptor
 
-const file_plugin_proto_rawDesc = "" +
-	"\n" +
-	"\fplugin.proto\x12\x11sub2api.plugin.v1\"\x10\n" +
-	"\x0eGetInfoRequest\"\xd8\x01\n" +
-	"\x0fGetInfoResponse\x12\x1b\n" +
-	"\tplugin_id\x18\x01 \x01(\tR\bpluginId\x12%\n" +
-	"\x0eplugin_version\x18\x02 \x01(\tR\rpluginVersion\x12)\n" +
-	"\x10protocol_version\x18\x03 \x01(\rR\x0fprotocolVersion\x122\n" +
-	"\x15transport_api_version\x18\x04 \x01(\rR\x13transportApiVersion\x12\"\n" +
-	"\fcapabilities\x18\x05 \x03(\tR\fcapabilities\"\x0f\n" +
-	"\rHealthRequest\"D\n" +
-	"\x0eHealthResponse\x12\x18\n" +
-	"\ahealthy\x18\x01 \x01(\bR\ahealthy\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"8\n" +
-	"\x15ValidateConfigRequest\x12\x1f\n" +
-	"\vconfig_json\x18\x01 \x01(\fR\n" +
-	"configJson\"~\n" +
-	"\x16ValidateConfigResponse\x12\x14\n" +
-	"\x05valid\x18\x01 \x01(\bR\x05valid\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\x124\n" +
-	"\x16normalized_config_json\x18\x03 \x01(\fR\x14normalizedConfigJson\"5\n" +
-	"\x12ApplyConfigRequest\x12\x1f\n" +
-	"\vconfig_json\x18\x01 \x01(\fR\n" +
-	"configJson\"I\n" +
-	"\x13ApplyConfigResponse\x12\x18\n" +
-	"\aapplied\x18\x01 \x01(\bR\aapplied\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"4\n" +
-	"\x11TestConfigRequest\x12\x1f\n" +
-	"\vconfig_json\x18\x01 \x01(\fR\n" +
-	"configJson\"g\n" +
-	"\x12TestConfigResponse\x12\x18\n" +
-	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\x12\x1d\n" +
-	"\n" +
-	"latency_ms\x18\x03 \x01(\x03R\tlatencyMs\"&\n" +
-	"\fHeaderValues\x12\x16\n" +
-	"\x06values\x18\x01 \x03(\tR\x06values\"\x8c\x04\n" +
-	"\x13ForwardRequestStart\x12\x1d\n" +
-	"\n" +
-	"request_id\x18\x01 \x01(\tR\trequestId\x12\x16\n" +
-	"\x06method\x18\x02 \x01(\tR\x06method\x12\x10\n" +
-	"\x03url\x18\x03 \x01(\tR\x03url\x12\x12\n" +
-	"\x04host\x18\x04 \x01(\tR\x04host\x12M\n" +
-	"\aheaders\x18\x05 \x03(\v23.sub2api.plugin.v1.ForwardRequestStart.HeadersEntryR\aheaders\x12\x1b\n" +
-	"\tproxy_url\x18\x06 \x01(\tR\bproxyUrl\x12\x1d\n" +
-	"\n" +
-	"account_id\x18\a \x01(\x03R\taccountId\x12/\n" +
-	"\x13account_concurrency\x18\b \x01(\x05R\x12accountConcurrency\x12\x1a\n" +
-	"\bplatform\x18\t \x01(\tR\bplatform\x12!\n" +
-	"\faccount_type\x18\n" +
-	" \x01(\tR\vaccountType\x12%\n" +
-	"\x0econtent_length\x18\v \x01(\x03R\rcontentLength\x12\x19\n" +
-	"\bhas_body\x18\f \x01(\bR\ahasBody\x1a[\n" +
-	"\fHeadersEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x125\n" +
-	"\x05value\x18\x02 \x01(\v2\x1f.sub2api.plugin.v1.HeaderValuesR\x05value:\x028\x01\"\x97\x01\n" +
-	"\x0eForwardRequest\x12>\n" +
-	"\x05start\x18\x01 \x01(\v2&.sub2api.plugin.v1.ForwardRequestStartH\x00R\x05start\x12\x1f\n" +
-	"\n" +
-	"body_chunk\x18\x02 \x01(\fH\x00R\tbodyChunk\x12\x1b\n" +
-	"\bbody_end\x18\x03 \x01(\bH\x00R\abodyEndB\a\n" +
-	"\x05frame\"\x8d\x03\n" +
-	"\x14ForwardResponseStart\x12\x1f\n" +
-	"\vstatus_code\x18\x01 \x01(\x05R\n" +
-	"statusCode\x12\x16\n" +
-	"\x06status\x18\x02 \x01(\tR\x06status\x12\x1a\n" +
-	"\bprotocol\x18\x03 \x01(\tR\bprotocol\x12%\n" +
-	"\x0eprotocol_major\x18\x04 \x01(\x05R\rprotocolMajor\x12%\n" +
-	"\x0eprotocol_minor\x18\x05 \x01(\x05R\rprotocolMinor\x12N\n" +
-	"\aheaders\x18\x06 \x03(\v24.sub2api.plugin.v1.ForwardResponseStart.HeadersEntryR\aheaders\x12%\n" +
-	"\x0econtent_length\x18\a \x01(\x03R\rcontentLength\x1a[\n" +
-	"\fHeadersEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x125\n" +
-	"\x05value\x18\x02 \x01(\v2\x1f.sub2api.plugin.v1.HeaderValuesR\x05value:\x028\x01\"\\\n" +
-	"\x12ForwardResponseEnd\x12%\n" +
-	"\x0ebytes_received\x18\x01 \x01(\x03R\rbytesReceived\x12\x1f\n" +
-	"\vduration_ms\x18\x02 \x01(\x03R\n" +
-	"durationMs\"g\n" +
-	"\x14ForwardResponseError\x12\x12\n" +
-	"\x04code\x18\x01 \x01(\tR\x04code\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\x12!\n" +
-	"\frequest_sent\x18\x03 \x01(\bR\vrequestSent\"\xf8\x01\n" +
-	"\x0fForwardResponse\x12?\n" +
-	"\x05start\x18\x01 \x01(\v2'.sub2api.plugin.v1.ForwardResponseStartH\x00R\x05start\x12\x1f\n" +
-	"\n" +
-	"body_chunk\x18\x02 \x01(\fH\x00R\tbodyChunk\x129\n" +
-	"\x03end\x18\x03 \x01(\v2%.sub2api.plugin.v1.ForwardResponseEndH\x00R\x03end\x12?\n" +
-	"\x05error\x18\x04 \x01(\v2'.sub2api.plugin.v1.ForwardResponseErrorH\x00R\x05errorB\a\n" +
-	"\x05frame2\xa8\x04\n" +
-	"\x0fTransportPlugin\x12P\n" +
-	"\aGetInfo\x12!.sub2api.plugin.v1.GetInfoRequest\x1a\".sub2api.plugin.v1.GetInfoResponse\x12M\n" +
-	"\x06Health\x12 .sub2api.plugin.v1.HealthRequest\x1a!.sub2api.plugin.v1.HealthResponse\x12e\n" +
-	"\x0eValidateConfig\x12(.sub2api.plugin.v1.ValidateConfigRequest\x1a).sub2api.plugin.v1.ValidateConfigResponse\x12\\\n" +
-	"\vApplyConfig\x12%.sub2api.plugin.v1.ApplyConfigRequest\x1a&.sub2api.plugin.v1.ApplyConfigResponse\x12Y\n" +
-	"\n" +
-	"TestConfig\x12$.sub2api.plugin.v1.TestConfigRequest\x1a%.sub2api.plugin.v1.TestConfigResponse\x12T\n" +
-	"\aForward\x12!.sub2api.plugin.v1.ForwardRequest\x1a\".sub2api.plugin.v1.ForwardResponse(\x010\x01B7Z5github.com/Wei-Shaw/sub2api/pkg/pluginapi/v1;pluginv1b\x06proto3"
+const file_plugin_proto_rawDesc = "\n\fplugin.proto\x12\x13relaydeck.plugin.v1\"\x10\n\x0eGetInfoRequest\"\xe2\x01\n\x0fGetInfoResponse\x12\x1d\n\tplugin_id\x18\x01 \x01(\t2\x00R\bpluginId\x12'\n\x0eplugin_version\x18\x02 \x01(\t2\x00R\rpluginVersion\x12+\n\x10protocol_version\x18\x03 \x01(\r2\x00R\x0fprotocolVersion\x124\n\x15transport_api_version\x18\x04 \x01(\r2\x00R\x13transportApiVersion\x12$\n\fcapabilities\x18\x05 \x03(\t2\x00R\fcapabilities\"\x0f\n\rHealthRequest\"H\n\x0eHealthResponse\x12\x1a\n\ahealthy\x18\x01 \x01(\b2\x00R\ahealthy\x12\x1a\n\amessage\x18\x02 \x01(\t2\x00R\amessage\":\n\x15ValidateConfigRequest\x12!\n\vconfig_json\x18\x01 \x01(\f2\x00R\nconfigJson\"\x84\x01\n\x16ValidateConfigResponse\x12\x16\n\x05valid\x18\x01 \x01(\b2\x00R\x05valid\x12\x1a\n\amessage\x18\x02 \x01(\t2\x00R\amessage\x126\n\x16normalized_config_json\x18\x03 \x01(\f2\x00R\x14normalizedConfigJson\"7\n\x12ApplyConfigRequest\x12!\n\vconfig_json\x18\x01 \x01(\f2\x00R\nconfigJson\"M\n\x13ApplyConfigResponse\x12\x1a\n\aapplied\x18\x01 \x01(\b2\x00R\aapplied\x12\x1a\n\amessage\x18\x02 \x01(\t2\x00R\amessage\"6\n\x11TestConfigRequest\x12!\n\vconfig_json\x18\x01 \x01(\f2\x00R\nconfigJson\"m\n\x12TestConfigResponse\x12\x1a\n\asuccess\x18\x01 \x01(\b2\x00R\asuccess\x12\x1a\n\amessage\x18\x02 \x01(\t2\x00R\amessage\x12\x1f\n\nlatency_ms\x18\x03 \x01(\x032\x00R\tlatencyMs\"(\n\fHeaderValues\x12\x18\n\x06values\x18\x01 \x03(\t2\x00R\x06values\"\xa8\x04\n\x13ForwardRequestStart\x12\x1f\n\nrequest_id\x18\x01 \x01(\t2\x00R\trequestId\x12\x18\n\x06method\x18\x02 \x01(\t2\x00R\x06method\x12\x12\n\x03url\x18\x03 \x01(\t2\x00R\x03url\x12\x14\n\x04host\x18\x04 \x01(\t2\x00R\x04host\x12O\n\aheaders\x18\x05 \x03(\v25.relaydeck.plugin.v1.ForwardRequestStart.HeadersEntryR\aheaders\x12\x1d\n\tproxy_url\x18\x06 \x01(\t2\x00R\bproxyUrl\x12\x1f\n\naccount_id\x18\a \x01(\x032\x00R\taccountId\x121\n\x13account_concurrency\x18\b \x01(\x052\x00R\x12accountConcurrency\x12\x1c\n\bplatform\x18\t \x01(\t2\x00R\bplatform\x12#\n\faccount_type\x18\n \x01(\t2\x00R\vaccountType\x12'\n\x0econtent_length\x18\v \x01(\x032\x00R\rcontentLength\x12\x1b\n\bhas_body\x18\f \x01(\b2\x00R\ahasBody\x1a_\n\fHeadersEntry\x12\x12\n\x03key\x18\x01 \x01(\t2\x00R\x03key\x127\n\x05value\x18\x02 \x01(\v2!.relaydeck.plugin.v1.HeaderValuesR\x05value:\x028\x01\"\x9d\x01\n\x0eForwardRequest\x12@\n\x05start\x18\x01 \x01(\v2(.relaydeck.plugin.v1.ForwardRequestStartH\x00R\x05start\x12!\n\nbody_chunk\x18\x02 \x01(\f2\x00H\x00R\tbodyChunk\x12\x1d\n\bbody_end\x18\x03 \x01(\b2\x00H\x00R\abodyEndB\a\n\x05frame\"\x9f\x03\n\x14ForwardResponseStart\x12!\n\vstatus_code\x18\x01 \x01(\x052\x00R\nstatusCode\x12\x18\n\x06status\x18\x02 \x01(\t2\x00R\x06status\x12\x1c\n\bprotocol\x18\x03 \x01(\t2\x00R\bprotocol\x12'\n\x0eprotocol_major\x18\x04 \x01(\x052\x00R\rprotocolMajor\x12'\n\x0eprotocol_minor\x18\x05 \x01(\x052\x00R\rprotocolMinor\x12P\n\aheaders\x18\x06 \x03(\v26.relaydeck.plugin.v1.ForwardResponseStart.HeadersEntryR\aheaders\x12'\n\x0econtent_length\x18\a \x01(\x032\x00R\rcontentLength\x1a_\n\fHeadersEntry\x12\x12\n\x03key\x18\x01 \x01(\t2\x00R\x03key\x127\n\x05value\x18\x02 \x01(\v2!.relaydeck.plugin.v1.HeaderValuesR\x05value:\x028\x01\"`\n\x12ForwardResponseEnd\x12'\n\x0ebytes_received\x18\x01 \x01(\x032\x00R\rbytesReceived\x12!\n\vduration_ms\x18\x02 \x01(\x032\x00R\ndurationMs\"m\n\x14ForwardResponseError\x12\x14\n\x04code\x18\x01 \x01(\t2\x00R\x04code\x12\x1a\n\amessage\x18\x02 \x01(\t2\x00R\amessage\x12#\n\frequest_sent\x18\x03 \x01(\b2\x00R\vrequestSent\"\x80\x02\n\x0fForwardResponse\x12A\n\x05start\x18\x01 \x01(\v2).relaydeck.plugin.v1.ForwardResponseStartH\x00R\x05start\x12!\n\nbody_chunk\x18\x02 \x01(\f2\x00H\x00R\tbodyChunk\x12;\n\x03end\x18\x03 \x01(\v2'.relaydeck.plugin.v1.ForwardResponseEndH\x00R\x03end\x12A\n\x05error\x18\x04 \x01(\v2).relaydeck.plugin.v1.ForwardResponseErrorH\x00R\x05errorB\a\n\x05frame2\xc0\x04\n\x0fTransportPlugin\x12T\n\aGetInfo\x12#.relaydeck.plugin.v1.GetInfoRequest\x1a$.relaydeck.plugin.v1.GetInfoResponse\x12Q\n\x06Health\x12\".relaydeck.plugin.v1.HealthRequest\x1a#.relaydeck.plugin.v1.HealthResponse\x12i\n\x0eValidateConfig\x12*.relaydeck.plugin.v1.ValidateConfigRequest\x1a+.relaydeck.plugin.v1.ValidateConfigResponse\x12`\n\vApplyConfig\x12'.relaydeck.plugin.v1.ApplyConfigRequest\x1a(.relaydeck.plugin.v1.ApplyConfigResponse\x12]\n\nTestConfig\x12&.relaydeck.plugin.v1.TestConfigRequest\x1a'.relaydeck.plugin.v1.TestConfigResponse\x12X\n\aForward\x12#.relaydeck.plugin.v1.ForwardRequest\x1a$.relaydeck.plugin.v1.ForwardResponse(\x010\x01B8Z6github.com/JnyRoad/RelayDeck/pkg/pluginapi/v1;pluginv1b\x06proto3"
 
 var (
 	file_plugin_proto_rawDescOnce sync.Once
@@ -1231,47 +1135,47 @@ func file_plugin_proto_rawDescGZIP() []byte {
 
 var file_plugin_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_plugin_proto_goTypes = []any{
-	(*GetInfoRequest)(nil),         // 0: sub2api.plugin.v1.GetInfoRequest
-	(*GetInfoResponse)(nil),        // 1: sub2api.plugin.v1.GetInfoResponse
-	(*HealthRequest)(nil),          // 2: sub2api.plugin.v1.HealthRequest
-	(*HealthResponse)(nil),         // 3: sub2api.plugin.v1.HealthResponse
-	(*ValidateConfigRequest)(nil),  // 4: sub2api.plugin.v1.ValidateConfigRequest
-	(*ValidateConfigResponse)(nil), // 5: sub2api.plugin.v1.ValidateConfigResponse
-	(*ApplyConfigRequest)(nil),     // 6: sub2api.plugin.v1.ApplyConfigRequest
-	(*ApplyConfigResponse)(nil),    // 7: sub2api.plugin.v1.ApplyConfigResponse
-	(*TestConfigRequest)(nil),      // 8: sub2api.plugin.v1.TestConfigRequest
-	(*TestConfigResponse)(nil),     // 9: sub2api.plugin.v1.TestConfigResponse
-	(*HeaderValues)(nil),           // 10: sub2api.plugin.v1.HeaderValues
-	(*ForwardRequestStart)(nil),    // 11: sub2api.plugin.v1.ForwardRequestStart
-	(*ForwardRequest)(nil),         // 12: sub2api.plugin.v1.ForwardRequest
-	(*ForwardResponseStart)(nil),   // 13: sub2api.plugin.v1.ForwardResponseStart
-	(*ForwardResponseEnd)(nil),     // 14: sub2api.plugin.v1.ForwardResponseEnd
-	(*ForwardResponseError)(nil),   // 15: sub2api.plugin.v1.ForwardResponseError
-	(*ForwardResponse)(nil),        // 16: sub2api.plugin.v1.ForwardResponse
-	nil,                            // 17: sub2api.plugin.v1.ForwardRequestStart.HeadersEntry
-	nil,                            // 18: sub2api.plugin.v1.ForwardResponseStart.HeadersEntry
+	(*GetInfoRequest)(nil),         // 0: relaydeck.plugin.v1.GetInfoRequest
+	(*GetInfoResponse)(nil),        // 1: relaydeck.plugin.v1.GetInfoResponse
+	(*HealthRequest)(nil),          // 2: relaydeck.plugin.v1.HealthRequest
+	(*HealthResponse)(nil),         // 3: relaydeck.plugin.v1.HealthResponse
+	(*ValidateConfigRequest)(nil),  // 4: relaydeck.plugin.v1.ValidateConfigRequest
+	(*ValidateConfigResponse)(nil), // 5: relaydeck.plugin.v1.ValidateConfigResponse
+	(*ApplyConfigRequest)(nil),     // 6: relaydeck.plugin.v1.ApplyConfigRequest
+	(*ApplyConfigResponse)(nil),    // 7: relaydeck.plugin.v1.ApplyConfigResponse
+	(*TestConfigRequest)(nil),      // 8: relaydeck.plugin.v1.TestConfigRequest
+	(*TestConfigResponse)(nil),     // 9: relaydeck.plugin.v1.TestConfigResponse
+	(*HeaderValues)(nil),           // 10: relaydeck.plugin.v1.HeaderValues
+	(*ForwardRequestStart)(nil),    // 11: relaydeck.plugin.v1.ForwardRequestStart
+	(*ForwardRequest)(nil),         // 12: relaydeck.plugin.v1.ForwardRequest
+	(*ForwardResponseStart)(nil),   // 13: relaydeck.plugin.v1.ForwardResponseStart
+	(*ForwardResponseEnd)(nil),     // 14: relaydeck.plugin.v1.ForwardResponseEnd
+	(*ForwardResponseError)(nil),   // 15: relaydeck.plugin.v1.ForwardResponseError
+	(*ForwardResponse)(nil),        // 16: relaydeck.plugin.v1.ForwardResponse
+	nil,                            // 17: relaydeck.plugin.v1.ForwardRequestStart.HeadersEntry
+	nil,                            // 18: relaydeck.plugin.v1.ForwardResponseStart.HeadersEntry
 }
 var file_plugin_proto_depIdxs = []int32{
-	17, // 0: sub2api.plugin.v1.ForwardRequestStart.headers:type_name -> sub2api.plugin.v1.ForwardRequestStart.HeadersEntry
-	11, // 1: sub2api.plugin.v1.ForwardRequest.start:type_name -> sub2api.plugin.v1.ForwardRequestStart
-	18, // 2: sub2api.plugin.v1.ForwardResponseStart.headers:type_name -> sub2api.plugin.v1.ForwardResponseStart.HeadersEntry
-	13, // 3: sub2api.plugin.v1.ForwardResponse.start:type_name -> sub2api.plugin.v1.ForwardResponseStart
-	14, // 4: sub2api.plugin.v1.ForwardResponse.end:type_name -> sub2api.plugin.v1.ForwardResponseEnd
-	15, // 5: sub2api.plugin.v1.ForwardResponse.error:type_name -> sub2api.plugin.v1.ForwardResponseError
-	10, // 6: sub2api.plugin.v1.ForwardRequestStart.HeadersEntry.value:type_name -> sub2api.plugin.v1.HeaderValues
-	10, // 7: sub2api.plugin.v1.ForwardResponseStart.HeadersEntry.value:type_name -> sub2api.plugin.v1.HeaderValues
-	0,  // 8: sub2api.plugin.v1.TransportPlugin.GetInfo:input_type -> sub2api.plugin.v1.GetInfoRequest
-	2,  // 9: sub2api.plugin.v1.TransportPlugin.Health:input_type -> sub2api.plugin.v1.HealthRequest
-	4,  // 10: sub2api.plugin.v1.TransportPlugin.ValidateConfig:input_type -> sub2api.plugin.v1.ValidateConfigRequest
-	6,  // 11: sub2api.plugin.v1.TransportPlugin.ApplyConfig:input_type -> sub2api.plugin.v1.ApplyConfigRequest
-	8,  // 12: sub2api.plugin.v1.TransportPlugin.TestConfig:input_type -> sub2api.plugin.v1.TestConfigRequest
-	12, // 13: sub2api.plugin.v1.TransportPlugin.Forward:input_type -> sub2api.plugin.v1.ForwardRequest
-	1,  // 14: sub2api.plugin.v1.TransportPlugin.GetInfo:output_type -> sub2api.plugin.v1.GetInfoResponse
-	3,  // 15: sub2api.plugin.v1.TransportPlugin.Health:output_type -> sub2api.plugin.v1.HealthResponse
-	5,  // 16: sub2api.plugin.v1.TransportPlugin.ValidateConfig:output_type -> sub2api.plugin.v1.ValidateConfigResponse
-	7,  // 17: sub2api.plugin.v1.TransportPlugin.ApplyConfig:output_type -> sub2api.plugin.v1.ApplyConfigResponse
-	9,  // 18: sub2api.plugin.v1.TransportPlugin.TestConfig:output_type -> sub2api.plugin.v1.TestConfigResponse
-	16, // 19: sub2api.plugin.v1.TransportPlugin.Forward:output_type -> sub2api.plugin.v1.ForwardResponse
+	17, // 0: relaydeck.plugin.v1.ForwardRequestStart.headers:type_name -> relaydeck.plugin.v1.ForwardRequestStart.HeadersEntry
+	11, // 1: relaydeck.plugin.v1.ForwardRequest.start:type_name -> relaydeck.plugin.v1.ForwardRequestStart
+	18, // 2: relaydeck.plugin.v1.ForwardResponseStart.headers:type_name -> relaydeck.plugin.v1.ForwardResponseStart.HeadersEntry
+	13, // 3: relaydeck.plugin.v1.ForwardResponse.start:type_name -> relaydeck.plugin.v1.ForwardResponseStart
+	14, // 4: relaydeck.plugin.v1.ForwardResponse.end:type_name -> relaydeck.plugin.v1.ForwardResponseEnd
+	15, // 5: relaydeck.plugin.v1.ForwardResponse.error:type_name -> relaydeck.plugin.v1.ForwardResponseError
+	10, // 6: relaydeck.plugin.v1.ForwardRequestStart.HeadersEntry.value:type_name -> relaydeck.plugin.v1.HeaderValues
+	10, // 7: relaydeck.plugin.v1.ForwardResponseStart.HeadersEntry.value:type_name -> relaydeck.plugin.v1.HeaderValues
+	0,  // 8: relaydeck.plugin.v1.TransportPlugin.GetInfo:input_type -> relaydeck.plugin.v1.GetInfoRequest
+	2,  // 9: relaydeck.plugin.v1.TransportPlugin.Health:input_type -> relaydeck.plugin.v1.HealthRequest
+	4,  // 10: relaydeck.plugin.v1.TransportPlugin.ValidateConfig:input_type -> relaydeck.plugin.v1.ValidateConfigRequest
+	6,  // 11: relaydeck.plugin.v1.TransportPlugin.ApplyConfig:input_type -> relaydeck.plugin.v1.ApplyConfigRequest
+	8,  // 12: relaydeck.plugin.v1.TransportPlugin.TestConfig:input_type -> relaydeck.plugin.v1.TestConfigRequest
+	12, // 13: relaydeck.plugin.v1.TransportPlugin.Forward:input_type -> relaydeck.plugin.v1.ForwardRequest
+	1,  // 14: relaydeck.plugin.v1.TransportPlugin.GetInfo:output_type -> relaydeck.plugin.v1.GetInfoResponse
+	3,  // 15: relaydeck.plugin.v1.TransportPlugin.Health:output_type -> relaydeck.plugin.v1.HealthResponse
+	5,  // 16: relaydeck.plugin.v1.TransportPlugin.ValidateConfig:output_type -> relaydeck.plugin.v1.ValidateConfigResponse
+	7,  // 17: relaydeck.plugin.v1.TransportPlugin.ApplyConfig:output_type -> relaydeck.plugin.v1.ApplyConfigResponse
+	9,  // 18: relaydeck.plugin.v1.TransportPlugin.TestConfig:output_type -> relaydeck.plugin.v1.TestConfigResponse
+	16, // 19: relaydeck.plugin.v1.TransportPlugin.Forward:output_type -> relaydeck.plugin.v1.ForwardResponse
 	14, // [14:20] is the sub-list for method output_type
 	8,  // [8:14] is the sub-list for method input_type
 	8,  // [8:8] is the sub-list for extension type_name

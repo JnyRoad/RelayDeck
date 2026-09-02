@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/ctxkey"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/timezone"
 )
 
 type gatewayTokenRequestPricingAtCtxKey struct{}

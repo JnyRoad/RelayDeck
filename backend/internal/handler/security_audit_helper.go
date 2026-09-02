@@ -5,16 +5,16 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
-	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
-	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/JnyRoad/RelayDeck/internal/securityaudit"
+	middleware2 "github.com/JnyRoad/RelayDeck/internal/server/middleware"
+	"github.com/JnyRoad/RelayDeck/internal/service"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
 
-const securityAuditCompletedContextKey = "sub2api.security_audit.completed"
-const securityAuditWSTurnContextKey = "sub2api.security_audit.ws_turn"
-const securityAuditWSDedupeContextKey = "sub2api.security_audit.ws_dedupe"
+const securityAuditCompletedContextKey = "relaydeck.security_audit.completed"
+const securityAuditWSTurnContextKey = "relaydeck.security_audit.ws_turn"
+const securityAuditWSDedupeContextKey = "relaydeck.security_audit.ws_dedupe"
 
 type securityAuditWSDedupeEntry struct {
 	stage    string

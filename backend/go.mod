@@ -1,4 +1,4 @@
-module github.com/Wei-Shaw/sub2api
+module github.com/JnyRoad/RelayDeck
 
 go 1.27.0
 

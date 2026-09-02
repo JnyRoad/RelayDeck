@@ -8,8 +8,8 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
-	"github.com/Wei-Shaw/sub2api/ent/batchimageitem"
-	"github.com/Wei-Shaw/sub2api/ent/predicate"
+	"github.com/JnyRoad/RelayDeck/ent/batchimageitem"
+	"github.com/JnyRoad/RelayDeck/ent/predicate"
 )
 
 // BatchImageItemDelete is the builder for deleting a BatchImageItem entity.

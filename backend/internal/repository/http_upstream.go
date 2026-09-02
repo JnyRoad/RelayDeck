@@ -26,14 +26,14 @@ import (
 	"golang.org/x/mod/semver"
 	"golang.org/x/net/http2"
 
-	"github.com/Wei-Shaw/sub2api/internal/config"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyurl"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyutil"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/servertiming"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
-	"github.com/Wei-Shaw/sub2api/internal/service"
-	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
+	"github.com/JnyRoad/RelayDeck/internal/config"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/proxyurl"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/proxyutil"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/servertiming"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/tlsfingerprint"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/xai"
+	"github.com/JnyRoad/RelayDeck/internal/service"
+	"github.com/JnyRoad/RelayDeck/internal/util/urlvalidator"
 )
 
 // 默认配置常量

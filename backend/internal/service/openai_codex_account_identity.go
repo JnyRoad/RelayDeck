@@ -97,7 +97,7 @@ func scopeCodexAccountIdentityValue(account *Account, apiKeyID int64, kind, raw 
 		return raw
 	}
 	return deriveStableUUIDv4(fmt.Sprintf(
-		"sub2api:codex-account-identity:%s:user:%d:account:%s:kind:%s:value:%s",
+		"relaydeck:codex-account-identity:%s:user:%d:account:%s:kind:%s:value:%s",
 		codexAccountIdentityNamespaceVersion,
 		apiKeyID,
 		namespace,

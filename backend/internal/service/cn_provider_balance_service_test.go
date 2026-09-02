@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/tlsfingerprint"
 	"github.com/stretchr/testify/require"
 )
 

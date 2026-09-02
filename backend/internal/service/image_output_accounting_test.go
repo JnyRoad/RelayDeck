@@ -29,10 +29,10 @@ data: [DONE]`
 	}
 }
 
-func TestOpenAIImageOutputCounter_NestedSub2API_StandardResponse(t *testing.T) {
-	// Simulate what a nested sub2api setup receives
-	// When the upstream sub2api returns a standard response, the downstream
-	// sub2api receives SSE events. This test verifies that no false positives
+func TestOpenAIImageOutputCounter_NestedRelayDeck_StandardResponse(t *testing.T) {
+	// Simulate what a nested relaydeck setup receives
+	// When the upstream relaydeck returns a standard response, the downstream
+	// relaydeck receives SSE events. This test verifies that no false positives
 	// occur.
 	sseBody := `data: {"type":"response.created","response":{"id":"resp_nested_1","object":"response","status":"in_progress"}}
 
@@ -52,7 +52,7 @@ data: [DONE]`
 
 	count := countOpenAIImageOutputsFromSSEBody(sseBody)
 	if count != 0 {
-		t.Errorf("expected 0 images for nested sub2api text-only response, got %d", count)
+		t.Errorf("expected 0 images for nested relaydeck text-only response, got %d", count)
 	}
 }
 

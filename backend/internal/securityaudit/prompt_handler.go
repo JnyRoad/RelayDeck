@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"strings"
 
-	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
-	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	infraerrors "github.com/JnyRoad/RelayDeck/internal/pkg/errors"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/response"
+	"github.com/JnyRoad/RelayDeck/internal/server/middleware"
 	"github.com/gin-gonic/gin"
 )
 

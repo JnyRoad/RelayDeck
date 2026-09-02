@@ -1,0 +1,22 @@
+[Unit]
+Description=RelayDeck Data Management Daemon
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=relaydeck
+Group=relaydeck
+WorkingDirectory=/opt/relaydeck
+ExecStart=/opt/relaydeck/datamanagementd \
+  -socket-path /tmp/relaydeck-datamanagement.sock \
+  -sqlite-path /var/lib/relaydeck/datamanagement/datamanagementd.db \
+  -version 1.0.0
+Restart=always
+RestartSec=5s
+LimitNOFILE=100000
+NoNewPrivileges=true
+PrivateTmp=false
+
+[Install]
+WantedBy=multi-user.target

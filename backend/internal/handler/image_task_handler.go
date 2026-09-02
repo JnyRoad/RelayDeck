@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
-	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
-	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
-	"github.com/Wei-Shaw/sub2api/internal/service"
+	infraerrors "github.com/JnyRoad/RelayDeck/internal/pkg/errors"
+	pkghttputil "github.com/JnyRoad/RelayDeck/internal/pkg/httputil"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/logger"
+	middleware2 "github.com/JnyRoad/RelayDeck/internal/server/middleware"
+	"github.com/JnyRoad/RelayDeck/internal/service"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )

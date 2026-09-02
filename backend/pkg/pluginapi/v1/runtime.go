@@ -18,11 +18,11 @@ const (
 	TransportPluginName = "oauth_transport"
 )
 
-// HandshakeConfig 防止普通可执行文件被误当成 Sub2API 插件启动。
+// HandshakeConfig 防止普通可执行文件被误当成 RelayDeck 插件启动。
 var HandshakeConfig = hcplugin.HandshakeConfig{
 	ProtocolVersion:  ProtocolVersion,
-	MagicCookieKey:   "SUB2API_PLUGIN_MAGIC_COOKIE",
-	MagicCookieValue: "sub2api-plugin-v1",
+	MagicCookieKey:   "RELAYDECK_PLUGIN_MAGIC_COOKIE",
+	MagicCookieValue: "relaydeck-plugin-v1",
 }
 
 // GRPCPlugin 把生成的 gRPC 服务注册到 go-plugin 子进程。

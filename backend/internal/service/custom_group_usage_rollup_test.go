@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	appTimezone "github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
+	appTimezone "github.com/JnyRoad/RelayDeck/internal/pkg/timezone"
 	"github.com/stretchr/testify/require"
 )
 

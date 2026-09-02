@@ -16,15 +16,15 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/JnyRoad/RelayDeck/internal/config"
 )
 
 const (
 	pluginManifestFilename                   = "manifest.json"
 	pluginSignatureFilename                  = "signature.json"
 	pluginArchiveMaxFiles                    = 512
-	builtInOpenAITransportPluginID           = "local.sub2api.openai-transport"
-	builtInOpenAITransportPublisherKeyID     = "sub2api-openai-transport-v1"
+	builtInOpenAITransportPluginID           = "local.relaydeck.openai-transport"
+	builtInOpenAITransportPublisherKeyID     = "relaydeck-openai-transport-v1"
 	builtInOpenAITransportPublisherKeyBase64 = "MqzSXAoG0iVR5kKWrC+mqcCeExkrT6zAr2WpQ4sA+yc="
 )
 

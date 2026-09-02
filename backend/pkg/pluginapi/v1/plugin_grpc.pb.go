@@ -19,12 +19,12 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	TransportPlugin_GetInfo_FullMethodName        = "/sub2api.plugin.v1.TransportPlugin/GetInfo"
-	TransportPlugin_Health_FullMethodName         = "/sub2api.plugin.v1.TransportPlugin/Health"
-	TransportPlugin_ValidateConfig_FullMethodName = "/sub2api.plugin.v1.TransportPlugin/ValidateConfig"
-	TransportPlugin_ApplyConfig_FullMethodName    = "/sub2api.plugin.v1.TransportPlugin/ApplyConfig"
-	TransportPlugin_TestConfig_FullMethodName     = "/sub2api.plugin.v1.TransportPlugin/TestConfig"
-	TransportPlugin_Forward_FullMethodName        = "/sub2api.plugin.v1.TransportPlugin/Forward"
+	TransportPlugin_GetInfo_FullMethodName        = "/relaydeck.plugin.v1.TransportPlugin/GetInfo"
+	TransportPlugin_Health_FullMethodName         = "/relaydeck.plugin.v1.TransportPlugin/Health"
+	TransportPlugin_ValidateConfig_FullMethodName = "/relaydeck.plugin.v1.TransportPlugin/ValidateConfig"
+	TransportPlugin_ApplyConfig_FullMethodName    = "/relaydeck.plugin.v1.TransportPlugin/ApplyConfig"
+	TransportPlugin_TestConfig_FullMethodName     = "/relaydeck.plugin.v1.TransportPlugin/TestConfig"
+	TransportPlugin_Forward_FullMethodName        = "/relaydeck.plugin.v1.TransportPlugin/Forward"
 )
 
 // TransportPluginClient is the client API for TransportPlugin service.
@@ -270,7 +270,7 @@ type TransportPlugin_ForwardServer = grpc.BidiStreamingServer[ForwardRequest, Fo
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var TransportPlugin_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "sub2api.plugin.v1.TransportPlugin",
+	ServiceName: "relaydeck.plugin.v1.TransportPlugin",
 	HandlerType: (*TransportPluginServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{

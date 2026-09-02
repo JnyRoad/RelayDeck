@@ -1,32 +1,43 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
-  <title id="title">Sub2API</title>
-  <desc id="desc">An interlocking S symbol representing subscription routing into APIs.</desc>
+  <title id="title">RelayDeck</title>
+  <desc id="desc">Three layered relay nodes routing requests through a unified platform.</desc>
   <defs>
-    <linearGradient id="s2a-bg" x1="72" y1="44" x2="442" y2="478" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#142B56"/>
-      <stop offset=".52" stop-color="#0A1A39"/>
-      <stop offset="1" stop-color="#061127"/>
+    <linearGradient id="relaydeck-surface" x1="64" y1="40" x2="448" y2="488" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#152A52"/>
+      <stop offset=".52" stop-color="#0A1834"/>
+      <stop offset="1" stop-color="#050D20"/>
     </linearGradient>
-    <radialGradient id="s2a-ambient" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(168 92) rotate(51) scale(342 382)">
-      <stop stop-color="#3E68B0" stop-opacity=".28"/>
-      <stop offset="1" stop-color="#3E68B0" stop-opacity="0"/>
+    <radialGradient id="relaydeck-glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(270 160) rotate(112) scale(330 350)">
+      <stop stop-color="#3D7DFF" stop-opacity=".34"/>
+      <stop offset="1" stop-color="#3D7DFF" stop-opacity="0"/>
     </radialGradient>
-    <linearGradient id="s2a-brand" x1="4" y1="4" x2="20" y2="20" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#79F4BD"/>
-      <stop offset=".48" stop-color="#39D9E7"/>
-      <stop offset="1" stop-color="#3875F6"/>
+    <linearGradient id="relaydeck-accent" x1="132" y1="152" x2="386" y2="366" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#76F5C2"/>
+      <stop offset=".5" stop-color="#35D8E9"/>
+      <stop offset="1" stop-color="#5C70FF"/>
     </linearGradient>
-    <filter id="s2a-shadow" x="-25%" y="-25%" width="150%" height="165%" color-interpolation-filters="sRGB">
-      <feDropShadow dx="0" dy=".55" stdDeviation=".65" flood-color="#020817" flood-opacity=".34"/>
+    <filter id="relaydeck-shadow" x="-30%" y="-35%" width="160%" height="180%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="12" stdDeviation="12" flood-color="#020817" flood-opacity=".44"/>
     </filter>
   </defs>
 
-  <rect x="16" y="16" width="480" height="480" rx="120" fill="url(#s2a-bg)"/>
-  <rect x="16" y="16" width="480" height="480" rx="120" fill="url(#s2a-ambient)"/>
-  <rect x="16.75" y="16.75" width="478.5" height="478.5" rx="119.25" fill="none" stroke="#A5BFFF" stroke-opacity=".16" stroke-width="1.5"/>
+  <rect x="16" y="16" width="480" height="480" rx="120" fill="url(#relaydeck-surface)"/>
+  <rect x="16" y="16" width="480" height="480" rx="120" fill="url(#relaydeck-glow)"/>
+  <rect x="16.75" y="16.75" width="478.5" height="478.5" rx="119.25" fill="none" stroke="#A5C8FF" stroke-opacity=".18" stroke-width="1.5"/>
 
-  <g transform="translate(52 52) scale(17)" fill="none" stroke="url(#s2a-brand)" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.7" filter="url(#s2a-shadow)">
-    <path d="m19.25 7.65-2.55-3.2a1.33 1.33 0 0 0-1.03-.5H8.58c-.34 0-.67.13-.91.37L4.15 7.65c-.93.88-.6 1.52.65 2.3l9.55 5.97"/>
-    <path d="m4.75 16.35 2.55 3.2c.25.31.63.5 1.03.5h7.09c.34 0 .67-.13.91-.37l3.52-3.33c.93-.88.6-1.52-.65-2.3L9.65 8.08"/>
+  <g fill="none" stroke="url(#relaydeck-accent)" stroke-linecap="round" stroke-linejoin="round" stroke-width="18" filter="url(#relaydeck-shadow)">
+    <path d="M144 178h126c34 0 62 28 62 62v22"/>
+    <path d="M180 256h88c35 0 64 29 64 64v14"/>
+    <path d="M216 334h82"/>
+  </g>
+  <g fill="url(#relaydeck-accent)" filter="url(#relaydeck-shadow)">
+    <rect x="108" y="140" width="72" height="72" rx="24"/>
+    <rect x="296" y="226" width="72" height="72" rx="24"/>
+    <rect x="296" y="316" width="72" height="72" rx="24"/>
+  </g>
+  <g fill="#E9FFFF">
+    <circle cx="144" cy="176" r="10"/>
+    <circle cx="332" cy="262" r="10"/>
+    <circle cx="332" cy="352" r="10"/>
   </g>
 </svg>

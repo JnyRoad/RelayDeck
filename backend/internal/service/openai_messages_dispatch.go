@@ -3,7 +3,7 @@ package service
 import (
 	"strings"
 
-	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/xai"
 )
 
 const (

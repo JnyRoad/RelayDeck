@@ -5,11 +5,11 @@ import (
 	"strings"
 	"time"
 
-	dbent "github.com/Wei-Shaw/sub2api/ent"
-	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
-	"github.com/Wei-Shaw/sub2api/ent/user"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
-	"github.com/Wei-Shaw/sub2api/internal/service"
+	dbent "github.com/JnyRoad/RelayDeck/ent"
+	"github.com/JnyRoad/RelayDeck/ent/redeemcode"
+	"github.com/JnyRoad/RelayDeck/ent/user"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/pagination"
+	"github.com/JnyRoad/RelayDeck/internal/service"
 
 	entsql "entgo.io/ent/dialect/sql"
 )

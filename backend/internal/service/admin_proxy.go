@@ -7,11 +7,11 @@ import (
 	"net/http"
 	"time"
 
-	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/httpclient"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
-	"github.com/Wei-Shaw/sub2api/internal/util/httputil"
+	infraerrors "github.com/JnyRoad/RelayDeck/internal/pkg/errors"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/httpclient"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/logger"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/pagination"
+	"github.com/JnyRoad/RelayDeck/internal/util/httputil"
 )
 
 // Proxy management implementations

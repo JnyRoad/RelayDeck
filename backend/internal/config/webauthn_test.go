@@ -19,9 +19,9 @@ func TestValidateWebAuthnConfig(t *testing.T) {
 			configure: func(cfg *Config) {
 				cfg.WebAuthn = WebAuthnConfig{
 					Enabled:       true,
-					RPDisplayName: "Sub2API",
-					RPID:          "sub2api.example.com",
-					RPOrigins:     []string{"https://sub2api.example.com"},
+					RPDisplayName: "RelayDeck",
+					RPID:          "relaydeck.example.com",
+					RPOrigins:     []string{"https://relaydeck.example.com"},
 				}
 			},
 		},
@@ -30,7 +30,7 @@ func TestValidateWebAuthnConfig(t *testing.T) {
 			configure: func(cfg *Config) {
 				cfg.WebAuthn = WebAuthnConfig{
 					Enabled:       true,
-					RPDisplayName: "Sub2API Dev",
+					RPDisplayName: "RelayDeck Dev",
 					RPID:          "localhost",
 					RPOrigins:     []string{"http://localhost:5173"},
 				}
@@ -41,8 +41,8 @@ func TestValidateWebAuthnConfig(t *testing.T) {
 			configure: func(cfg *Config) {
 				cfg.WebAuthn = WebAuthnConfig{
 					Enabled:       true,
-					RPDisplayName: "Sub2API",
-					RPOrigins:     []string{"https://sub2api.example.com"},
+					RPDisplayName: "RelayDeck",
+					RPOrigins:     []string{"https://relaydeck.example.com"},
 				}
 			},
 			wantError: "webauthn.rp_id",
@@ -52,9 +52,9 @@ func TestValidateWebAuthnConfig(t *testing.T) {
 			configure: func(cfg *Config) {
 				cfg.WebAuthn = WebAuthnConfig{
 					Enabled:       true,
-					RPDisplayName: "Sub2API",
-					RPID:          "https://sub2api.example.com",
-					RPOrigins:     []string{"https://sub2api.example.com"},
+					RPDisplayName: "RelayDeck",
+					RPID:          "https://relaydeck.example.com",
+					RPOrigins:     []string{"https://relaydeck.example.com"},
 				}
 			},
 			wantError: "domain without scheme",
@@ -64,9 +64,9 @@ func TestValidateWebAuthnConfig(t *testing.T) {
 			configure: func(cfg *Config) {
 				cfg.WebAuthn = WebAuthnConfig{
 					Enabled:       true,
-					RPDisplayName: "Sub2API",
-					RPID:          "sub2api.example.com",
-					RPOrigins:     []string{"http://sub2api.example.com"},
+					RPDisplayName: "RelayDeck",
+					RPID:          "relaydeck.example.com",
+					RPOrigins:     []string{"http://relaydeck.example.com"},
 				}
 			},
 			wantError: "must use HTTPS",
@@ -76,7 +76,7 @@ func TestValidateWebAuthnConfig(t *testing.T) {
 			configure: func(cfg *Config) {
 				cfg.WebAuthn = WebAuthnConfig{
 					Enabled:       true,
-					RPDisplayName: "Sub2API",
+					RPDisplayName: "RelayDeck",
 					RPID:          "example.com",
 					RPOrigins:     []string{"https://example.net"},
 				}

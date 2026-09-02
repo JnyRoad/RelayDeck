@@ -9,16 +9,16 @@ import (
 	"sync"
 	"testing"
 
-	dbent "github.com/Wei-Shaw/sub2api/ent"
-	_ "github.com/Wei-Shaw/sub2api/ent/runtime"
-	"github.com/Wei-Shaw/sub2api/internal/service"
+	dbent "github.com/JnyRoad/RelayDeck/ent"
+	_ "github.com/JnyRoad/RelayDeck/ent/runtime"
+	"github.com/JnyRoad/RelayDeck/internal/service"
 	"github.com/stretchr/testify/require"
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
 )
 
-const parameterLimitTestDriverName = "sub2api_param_limit_test"
+const parameterLimitTestDriverName = "relaydeck_param_limit_test"
 
 var registerParameterLimitTestDriverOnce sync.Once
 

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/JnyRoad/RelayDeck/internal/service"
 )
 
 type pluginRepository struct {
@@ -74,7 +74,7 @@ func (r *pluginRepository) Install(ctx context.Context, plugin *service.PluginIn
 	}
 	defer func() { _ = tx.Rollback() }()
 	row := tx.QueryRowContext(ctx, `
-			INSERT INTO sub2api_plugin_installations (
+			INSERT INTO relaydeck_plugin_installations (
 				plugin_key, name, version, description, author, manifest, artifact_data,
 				artifact_path, install_path, binary_path, binary_sha256,
 				signature_status, state, last_error, installed_by, installed_at, updated_at
@@ -97,10 +97,10 @@ func (r *pluginRepository) Install(ctx context.Context, plugin *service.PluginIn
 			installed_at = NOW(),
 			enabled_at = NULL,
 			updated_at = NOW()
-		WHERE sub2api_plugin_installations.state IN ('disabled', 'error', 'incompatible')
+		WHERE relaydeck_plugin_installations.state IN ('disabled', 'error', 'incompatible')
 		  AND NOT EXISTS (
-			SELECT 1 FROM sub2api_plugin_bindings b
-			WHERE b.plugin_id = sub2api_plugin_installations.id AND b.enabled = TRUE
+			SELECT 1 FROM relaydeck_plugin_bindings b
+			WHERE b.plugin_id = relaydeck_plugin_installations.id AND b.enabled = TRUE
 		  )
 		RETURNING id
 	`, plugin.PluginKey, plugin.Name, plugin.Version, plugin.Description, plugin.Author, manifestJSON, plugin.ArtifactData,
@@ -124,15 +124,15 @@ func (r *pluginRepository) Install(ctx context.Context, plugin *service.PluginIn
 
 func (r *pluginRepository) GetArtifact(ctx context.Context, id int64) ([]byte, error) {
 	var artifact []byte
-	err := r.db.QueryRowContext(ctx, `SELECT artifact_data FROM sub2api_plugin_installations WHERE id = $1`, id).Scan(&artifact)
+	err := r.db.QueryRowContext(ctx, `SELECT artifact_data FROM relaydeck_plugin_installations WHERE id = $1`, id).Scan(&artifact)
 	return artifact, err
 }
 
 func (r *pluginRepository) Delete(ctx context.Context, id int64, expectedBinarySHA256 string) error {
 	result, err := r.db.ExecContext(ctx, `
-		DELETE FROM sub2api_plugin_installations p
+		DELETE FROM relaydeck_plugin_installations p
 		WHERE p.id = $1 AND p.binary_sha256 = $2 AND p.state NOT IN ('starting', 'enabled')
-		  AND NOT EXISTS (SELECT 1 FROM sub2api_plugin_bindings b WHERE b.plugin_id = p.id AND b.enabled = TRUE)
+		  AND NOT EXISTS (SELECT 1 FROM relaydeck_plugin_bindings b WHERE b.plugin_id = p.id AND b.enabled = TRUE)
 	`, id, expectedBinarySHA256)
 	if err != nil {
 		return err
@@ -149,7 +149,7 @@ func (r *pluginRepository) Delete(ctx context.Context, id int64, expectedBinaryS
 
 func (r *pluginRepository) BeginEnable(ctx context.Context, id int64, binarySHA256, expectedState string) error {
 	result, err := r.db.ExecContext(ctx, `
-		UPDATE sub2api_plugin_installations
+		UPDATE relaydeck_plugin_installations
 		SET state = 'starting', last_error = '', updated_at = NOW()
 		WHERE id = $1 AND binary_sha256 = $2 AND state = $3 AND state <> 'starting'
 	`, id, binarySHA256, expectedState)
@@ -168,10 +168,10 @@ func (r *pluginRepository) BeginEnable(ctx context.Context, id int64, binarySHA2
 
 func (r *pluginRepository) MarkRuntimeHealthy(ctx context.Context, id int64, binarySHA256, configEncrypted string) error {
 	result, err := r.db.ExecContext(ctx, `
-		UPDATE sub2api_plugin_installations p
+		UPDATE relaydeck_plugin_installations p
 		SET state = 'enabled', last_error = '', enabled_at = COALESCE(enabled_at, NOW()), updated_at = NOW()
 		WHERE p.id = $1 AND p.binary_sha256 = $2 AND p.config_encrypted = $3
-		  AND EXISTS (SELECT 1 FROM sub2api_plugin_bindings b WHERE b.plugin_id = p.id AND b.enabled = TRUE)
+		  AND EXISTS (SELECT 1 FROM relaydeck_plugin_bindings b WHERE b.plugin_id = p.id AND b.enabled = TRUE)
 	`, id, binarySHA256, configEncrypted)
 	if err != nil {
 		return err
@@ -188,7 +188,7 @@ func (r *pluginRepository) MarkRuntimeHealthy(ctx context.Context, id int64, bin
 
 func (r *pluginRepository) UpdateState(ctx context.Context, id int64, state, lastError string, enabledAt *time.Time, expectedBinarySHA256, expectedState string) error {
 	result, err := r.db.ExecContext(ctx, `
-		UPDATE sub2api_plugin_installations
+		UPDATE relaydeck_plugin_installations
 		SET state = $2, last_error = $3, enabled_at = $4, updated_at = NOW()
 		WHERE id = $1 AND binary_sha256 = $5 AND state = $6
 	`, id, state, lastError, enabledAt, expectedBinarySHA256, expectedState)
@@ -207,7 +207,7 @@ func (r *pluginRepository) UpdateState(ctx context.Context, id int64, state, las
 
 func (r *pluginRepository) UpdateConfig(ctx context.Context, id int64, encrypted, expectedBinarySHA256 string) error {
 	result, err := r.db.ExecContext(ctx, `
-		UPDATE sub2api_plugin_installations
+		UPDATE relaydeck_plugin_installations
 		SET config_encrypted = $2, updated_at = NOW()
 		WHERE id = $1 AND binary_sha256 = $3
 	`, id, encrypted, expectedBinarySHA256)
@@ -240,7 +240,7 @@ func (r *pluginRepository) UpdateBindingsAndState(
 	}
 	defer func() { _ = tx.Rollback() }()
 	result, err := tx.ExecContext(ctx, `
-		UPDATE sub2api_plugin_installations
+		UPDATE relaydeck_plugin_installations
 		SET state = $2, last_error = $3, enabled_at = $4, updated_at = NOW()
 		WHERE id = $1 AND ($5 = '' OR state = $5) AND binary_sha256 = $6
 	`, pluginID, state, lastError, enabledAt, expectedState, expectedBinarySHA256)
@@ -265,12 +265,12 @@ type pluginBindingExecutor interface {
 }
 
 func replacePluginBindings(ctx context.Context, executor pluginBindingExecutor, pluginID int64, bindings []service.PluginBinding) error {
-	if _, err := executor.ExecContext(ctx, `DELETE FROM sub2api_plugin_bindings WHERE plugin_id = $1`, pluginID); err != nil {
+	if _, err := executor.ExecContext(ctx, `DELETE FROM relaydeck_plugin_bindings WHERE plugin_id = $1`, pluginID); err != nil {
 		return err
 	}
 	for _, binding := range bindings {
 		if _, err := executor.ExecContext(ctx, `
-			INSERT INTO sub2api_plugin_bindings (
+			INSERT INTO relaydeck_plugin_bindings (
 				plugin_id, capability, platform, account_type, enabled, rollout_percent, created_at, updated_at
 			) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
 		`, pluginID, binding.Capability, binding.Platform, binding.AccountType, binding.Enabled, binding.RolloutPercent); err != nil {
@@ -285,7 +285,7 @@ const pluginSelectSQL = `
 	       artifact_path, install_path, binary_path, binary_sha256,
 	       signature_status, state, config_encrypted, last_error,
 	       installed_by, installed_at, enabled_at, updated_at
-	FROM sub2api_plugin_installations`
+	FROM relaydeck_plugin_installations`
 
 type pluginScanner interface {
 	Scan(dest ...any) error
@@ -313,7 +313,7 @@ func (r *pluginRepository) listBindings(ctx context.Context, pluginID int64) ([]
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, plugin_id, capability, platform, account_type, enabled,
 		       rollout_percent, created_at, updated_at
-		FROM sub2api_plugin_bindings WHERE plugin_id = $1 ORDER BY id
+		FROM relaydeck_plugin_bindings WHERE plugin_id = $1 ORDER BY id
 	`, pluginID)
 	if err != nil {
 		return nil, err

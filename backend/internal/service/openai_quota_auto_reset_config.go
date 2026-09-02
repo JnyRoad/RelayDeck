@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	infraerrors "github.com/JnyRoad/RelayDeck/internal/pkg/errors"
 )
 
 const (

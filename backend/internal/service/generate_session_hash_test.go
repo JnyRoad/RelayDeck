@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/Wei-Shaw/sub2api/internal/domain"
+	"github.com/JnyRoad/RelayDeck/internal/domain"
 	"github.com/stretchr/testify/require"
 )
 

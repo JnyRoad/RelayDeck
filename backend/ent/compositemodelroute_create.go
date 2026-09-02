@@ -11,8 +11,8 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
-	"github.com/Wei-Shaw/sub2api/ent/compositemodelroute"
-	"github.com/Wei-Shaw/sub2api/ent/group"
+	"github.com/JnyRoad/RelayDeck/ent/compositemodelroute"
+	"github.com/JnyRoad/RelayDeck/ent/group"
 )
 
 // CompositeModelRouteCreate is the builder for creating a CompositeModelRoute entity.

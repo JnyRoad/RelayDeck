@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	dbent "github.com/Wei-Shaw/sub2api/ent"
-	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	dbent "github.com/JnyRoad/RelayDeck/ent"
+	infraerrors "github.com/JnyRoad/RelayDeck/internal/pkg/errors"
 )
 
 // AdminService interface defines admin management operations

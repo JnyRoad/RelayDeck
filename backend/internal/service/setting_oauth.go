@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/config"
-	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/JnyRoad/RelayDeck/internal/config"
+	infraerrors "github.com/JnyRoad/RelayDeck/internal/pkg/errors"
 	"github.com/imroc/req/v3"
 )
 

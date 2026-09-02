@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/antigravity"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/claude"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/geminicli"
 )
 
 const (
