@@ -3472,23 +3472,24 @@
           </p>
         </div>
 
-        <button
-          v-if="!appServerLogin"
-          type="button"
-          class="btn btn-primary"
-          data-testid="app-server-login-start"
-          :disabled="appServerLoginLoading"
-          @click="startAppServerLogin"
-        >
-          {{
-            appServerLoginLoading
-              ? t('admin.accounts.oauth.generating')
-              : t('admin.accounts.oauth.openai.appServer.startDeviceCode')
-          }}
-        </button>
-        <p v-if="appServerLoginError" class="text-sm text-red-600 dark:text-red-400">
-          {{ appServerLoginError }}
-        </p>
+        <template v-if="!appServerLogin">
+          <button
+            type="button"
+            class="btn btn-primary"
+            data-testid="app-server-login-start"
+            :disabled="appServerLoginLoading"
+            @click="startAppServerLogin"
+          >
+            {{
+              appServerLoginLoading
+                ? t('admin.accounts.oauth.generating')
+                : t('admin.accounts.oauth.openai.appServer.startDeviceCode')
+            }}
+          </button>
+          <p v-if="appServerLoginError" class="text-sm text-red-600 dark:text-red-400">
+            {{ appServerLoginError }}
+          </p>
+        </template>
 
         <template v-else>
           <div

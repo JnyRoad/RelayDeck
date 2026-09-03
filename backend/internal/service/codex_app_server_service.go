@@ -125,7 +125,7 @@ func NewCodexAppServerService(cfg CodexAppServerServiceConfig) *CodexAppServerSe
 // The process receives an isolated CODEX_HOME and therefore owns all tokens.
 func (s *CodexAppServerService) StartLogin(ctx context.Context, mode CodexAppServerLoginMode) (*CodexAppServerLogin, error) {
 	if s == nil || s.launcher == nil {
-		return nil, errors.New("Codex app-server 登录服务未配置")
+		return nil, errors.New("codex app-server 登录服务未配置")
 	}
 	if mode != CodexAppServerLoginModeBrowser && mode != CodexAppServerLoginModeDeviceCode {
 		return nil, fmt.Errorf("不支持的 Codex app-server 登录方式: %q", mode)
@@ -175,12 +175,12 @@ func (s *CodexAppServerService) StartLogin(ctx context.Context, mode CodexAppSer
 	if strings.TrimSpace(response.LoginID) == "" {
 		_ = transport.Close()
 		_ = os.RemoveAll(homeDir)
-		return nil, errors.New("Codex app-server 未返回登录会话标识")
+		return nil, errors.New("codex app-server 未返回登录会话标识")
 	}
 	if mode == CodexAppServerLoginModeBrowser && strings.TrimSpace(response.AuthorizationURL) == "" {
 		_ = transport.Close()
 		_ = os.RemoveAll(homeDir)
-		return nil, errors.New("Codex app-server 未返回浏览器授权地址")
+		return nil, errors.New("codex app-server 未返回浏览器授权地址")
 	}
 	if mode == CodexAppServerLoginModeDeviceCode && (strings.TrimSpace(response.VerificationURL) == "" || strings.TrimSpace(response.UserCode) == "") {
 		_ = transport.Close()
