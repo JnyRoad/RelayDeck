@@ -9,6 +9,10 @@ const {
   showWarningMock,
   importCodexSessionMock,
   createOpenAICodexPATMock,
+  startCodexAppServerLoginMock,
+  getCodexAppServerLoginMock,
+  createCodexAppServerAccountMock,
+  cancelCodexAppServerLoginMock,
   authIsSimpleMode,
 } = vi.hoisted(() => ({
   createAccountMock: vi.fn(),
@@ -17,6 +21,10 @@ const {
   showWarningMock: vi.fn(),
   importCodexSessionMock: vi.fn(),
   createOpenAICodexPATMock: vi.fn(),
+  startCodexAppServerLoginMock: vi.fn(),
+  getCodexAppServerLoginMock: vi.fn(),
+  createCodexAppServerAccountMock: vi.fn(),
+  cancelCodexAppServerLoginMock: vi.fn(),
   authIsSimpleMode: { value: true },
 }))
 
@@ -45,6 +53,10 @@ vi.mock('@/api/admin', () => ({
       checkMixedChannelRisk: vi.fn().mockResolvedValue({ has_risk: false }),
       importCodexSession: importCodexSessionMock,
       createOpenAICodexPAT: createOpenAICodexPATMock,
+      startCodexAppServerLogin: startCodexAppServerLoginMock,
+      getCodexAppServerLogin: getCodexAppServerLoginMock,
+      createCodexAppServerAccount: createCodexAppServerAccountMock,
+      cancelCodexAppServerLogin: cancelCodexAppServerLoginMock,
     },
     settings: {
       getWebSearchEmulationConfig: vi.fn().mockResolvedValue({ enabled: false, providers: [] }),
@@ -210,6 +222,10 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
       warnings: [],
     })
     createOpenAICodexPATMock.mockReset().mockResolvedValue({})
+    startCodexAppServerLoginMock.mockReset()
+    getCodexAppServerLoginMock.mockReset()
+    createCodexAppServerAccountMock.mockReset()
+    cancelCodexAppServerLoginMock.mockReset()
   })
 
   it('hides only the redundant account toggle when every selected group enables tier pricing', async () => {
@@ -432,6 +448,47 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(flow.props('showAgentIdentityOption')).toBe(true)
     expect(flow.props('showCodexPatOption')).toBe(true)
     expect(flow.props('initialInputMethod')).toBe('manual')
+  })
+
+  it('uses the official app-server managed login rather than the legacy OAuth form when selected', async () => {
+    startCodexAppServerLoginMock.mockResolvedValue({
+      session_id: 'profile-1',
+      login_id: 'official-login-1',
+      mode: 'device_code',
+      status: 'pending',
+      verification_url: 'https://auth.openai.com/codex/device',
+      user_code: 'ABCD-1234',
+    })
+    getCodexAppServerLoginMock.mockResolvedValue({
+      session_id: 'profile-1',
+      login_id: 'official-login-1',
+      mode: 'device_code',
+      status: 'completed',
+    })
+    createCodexAppServerAccountMock.mockResolvedValue({ id: 9, name: 'official runtime' })
+
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await wrapper.get('[data-testid="openai-auth-scheme-app-server"]').trigger('click')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('official runtime')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="app-server-login-start"]').exists()).toBe(true)
+    expect(wrapper.findComponent(OAuthAuthorizationFlowStub).exists()).toBe(false)
+    await wrapper.get('[data-testid="app-server-login-start"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="app-server-login-refresh"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="app-server-login-create-account"]').trigger('click')
+    await flushPromises()
+
+    expect(startCodexAppServerLoginMock).toHaveBeenCalledWith('device_code')
+    expect(createCodexAppServerAccountMock).toHaveBeenCalledWith('profile-1', {
+      name: 'official runtime',
+      priority: 1,
+    })
+    expect(createAccountMock).not.toHaveBeenCalled()
   })
 
   it.each([

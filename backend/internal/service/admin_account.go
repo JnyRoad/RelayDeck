@@ -407,6 +407,10 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 	delete(accountExtra, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(accountExtra, OllamaCloudUsageSnapshotExtraKey)
 	accountExtra = prepareCodexFingerprintExtraForCreate(input.Platform, input.Type, accountExtra)
+	schedulable := true
+	if input.Schedulable != nil {
+		schedulable = *input.Schedulable
+	}
 	account := &Account{
 		Name:        input.Name,
 		Notes:       normalizeAccountNotes(input.Notes),
@@ -418,7 +422,7 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 		Concurrency: normalizeAccountConcurrency(input.Platform, input.Type, input.Concurrency),
 		Priority:    input.Priority,
 		Status:      StatusActive,
-		Schedulable: true,
+		Schedulable: schedulable,
 	}
 	if input.ProbeEnabled != nil && *input.ProbeEnabled {
 		if !isUpstreamBillingProbeAccount(account) {
@@ -522,7 +526,7 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 
 	// OAuth 账号：创建后异步设置隐私。
 	// 使用 Ensure（幂等）而非 Force：新建账号 Extra 为空时效果相同，但更安全。
-	if account.Type == AccountTypeOAuth {
+	if account.Type == AccountTypeOAuth && !account.IsCodexAppServerManaged() {
 		switch account.Platform {
 		case PlatformOpenAI:
 			go func() {
