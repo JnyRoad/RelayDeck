@@ -281,8 +281,10 @@ func (s *CodexAppServerService) CancelLogin(ctx context.Context, sessionID strin
 		return errors.New("codex app-server 登录会话不存在或已结束")
 	}
 	login := session.snapshot()
+	cancelCtx, cancel := context.WithTimeout(ctx, codexAppServerLoginStartTimeout)
+	defer cancel()
 	requestErr, closeErr, removeErr := s.releaseIncompleteProfile(
-		ctx,
+		cancelCtx,
 		session,
 		login.LoginID,
 		login.Status != CodexAppServerLoginStatusCompleted,

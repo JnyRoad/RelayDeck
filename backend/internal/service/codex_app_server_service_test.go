@@ -112,6 +112,31 @@ func TestCodexAppServerService_BoundsLoginStartRequest(t *testing.T) {
 	require.WithinDuration(t, time.Now().Add(15*time.Second), deadline, time.Second)
 }
 
+// Cancellation uses the same bounded RPC window as login start, so a hung
+// runtime cannot hold an administrative cancellation request indefinitely.
+func TestCodexAppServerService_BoundsLoginCancelRequest(t *testing.T) {
+	transport := newFakeCodexAppServerTransport(t, map[string]json.RawMessage{
+		"account/login/start": json.RawMessage(`{
+			"type":"chatgptDeviceCode",
+			"loginId":"official-login-cancel",
+			"verificationUrl":"https://auth.openai.com/codex/device",
+			"userCode":"ABCD-7890"
+		}`),
+		"account/login/cancel": json.RawMessage(`{}`),
+	})
+	service := NewCodexAppServerService(CodexAppServerServiceConfig{
+		RootDir:  t.TempDir(),
+		Launcher: &fakeCodexAppServerLauncher{transport: transport},
+	})
+
+	started, err := service.StartLogin(context.Background(), CodexAppServerLoginModeDeviceCode)
+	require.NoError(t, err)
+	require.NoError(t, service.CancelLogin(context.Background(), started.SessionID))
+	deadline, ok := transport.requestDeadline("account/login/cancel")
+	require.True(t, ok)
+	require.WithinDuration(t, time.Now().Add(15*time.Second), deadline, time.Second)
+}
+
 // Abandoned sessions must expire even when the browser never returns to call
 // the cancel endpoint, otherwise each retry retains a process and profile.
 func TestCodexAppServerService_ExpiresAbandonedLogin(t *testing.T) {
