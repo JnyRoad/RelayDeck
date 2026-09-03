@@ -21,6 +21,9 @@ const (
 	codexAppServerLoginStartTimeout = 15 * time.Second
 	codexAppServerLoginSessionTTL   = 15 * time.Minute
 
+	CodexAppServerTransportStdio     = "stdio"
+	CodexAppServerTransportWebSocket = "websocket"
+
 	// CodexAppServerLoginModeBrowser asks the official Codex app-server to own
 	// the browser/loopback flow. It is useful only when the browser runs on the
 	// same host as the app-server process.
@@ -74,9 +77,14 @@ type CodexAppServerTransport interface {
 }
 
 // CodexAppServerLauncher creates an initialized official Codex app-server
-// transport in an isolated CODEX_HOME directory.
+// transport. The launcher decides whether the session profile is local or
+// host-managed.
 type CodexAppServerLauncher interface {
 	Start(ctx context.Context, homeDir string) (CodexAppServerTransport, error)
+}
+
+type codexAppServerLauncherTransportKindProvider interface {
+	codexAppServerTransportKind() string
 }
 
 // CodexAppServerServiceConfig contains only host-operator configuration. The
@@ -87,10 +95,12 @@ type CodexAppServerServiceConfig struct {
 }
 
 // CodexAppServerService starts and observes official app-server-managed login
-// sessions. The credentials live only under the isolated CODEX_HOME profile.
+// sessions. Stdio sessions own credentials in isolated local profiles; remote
+// sessions retain only a local profile marker and keep credentials on the host.
 type CodexAppServerService struct {
-	rootDir  string
-	launcher CodexAppServerLauncher
+	rootDir       string
+	launcher      CodexAppServerLauncher
+	transportKind string
 
 	mu       sync.RWMutex
 	sessions map[string]*codexAppServerSession
@@ -120,14 +130,47 @@ func NewCodexAppServerService(cfg CodexAppServerServiceConfig) *CodexAppServerSe
 		rootDir = filepath.Join(base, "codex-app-server-profiles")
 	}
 	launcher := cfg.Launcher
-	if launcher == nil {
-		launcher = NewExecCodexAppServerLauncher(strings.TrimSpace(os.Getenv("CODEX_APP_SERVER_BIN")))
+	transportKind := CodexAppServerTransportStdio
+	if launcher != nil {
+		if provider, ok := launcher.(codexAppServerLauncherTransportKindProvider); ok {
+			transportKind = provider.codexAppServerTransportKind()
+		}
+	} else {
+		remoteURL := strings.TrimSpace(os.Getenv("CODEX_APP_SERVER_REMOTE_URL"))
+		remoteTokenFile := strings.TrimSpace(os.Getenv("CODEX_APP_SERVER_REMOTE_TOKEN_FILE"))
+		switch {
+		case remoteURL == "":
+			launcher = NewExecCodexAppServerLauncher(strings.TrimSpace(os.Getenv("CODEX_APP_SERVER_BIN")))
+		case remoteTokenFile != "":
+			launcher = NewRemoteCodexAppServerLauncher(remoteURL, remoteTokenFile)
+			transportKind = CodexAppServerTransportWebSocket
+		default:
+			launcher = unavailableCodexAppServerLauncher{err: errors.New("本机 Codex app-server bridge 配置不完整")}
+		}
 	}
 	return &CodexAppServerService{
-		rootDir:  filepath.Clean(rootDir),
-		launcher: launcher,
-		sessions: make(map[string]*codexAppServerSession),
+		rootDir:       filepath.Clean(rootDir),
+		launcher:      launcher,
+		transportKind: transportKind,
+		sessions:      make(map[string]*codexAppServerSession),
 	}
+}
+
+// TransportKind identifies the runtime that owns a created app-server profile.
+// It is metadata only and never contains an endpoint or bridge credential.
+func (s *CodexAppServerService) TransportKind() string {
+	if s == nil || s.transportKind == "" {
+		return CodexAppServerTransportStdio
+	}
+	return s.transportKind
+}
+
+type unavailableCodexAppServerLauncher struct {
+	err error
+}
+
+func (l unavailableCodexAppServerLauncher) Start(context.Context, string) (CodexAppServerTransport, error) {
+	return nil, l.err
 }
 
 // StartLogin delegates the authentication choice to the official app-server.

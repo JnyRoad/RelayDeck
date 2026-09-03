@@ -33,6 +33,7 @@ type codexAppServerLoginService interface {
 	CompleteLogin(sessionID string) (string, error)
 	FinalizeLogin(sessionID string) error
 	CancelLogin(ctx context.Context, sessionID string) error
+	TransportKind() string
 }
 
 type openAIQuotaService interface {
@@ -217,7 +218,7 @@ func (h *OpenAIOAuthHandler) CreateAppServerAccount(c *gin.Context) {
 		},
 		Extra: map[string]any{
 			"app_server_managed":   true,
-			"app_server_transport": "stdio",
+			"app_server_transport": h.appServerLoginService.TransportKind(),
 		},
 		Concurrency:           1,
 		Priority:              req.Priority,

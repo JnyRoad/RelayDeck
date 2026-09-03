@@ -10,7 +10,8 @@ redis_data/
 # Environment configuration (contains sensitive information)
 .env
 
-# Backup files
+# Backup files (may contain runtime or database data)
+backups/
 *.backup
 *.bak
 

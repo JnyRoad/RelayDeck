@@ -118,6 +118,39 @@ func TestOpenAIOAuthHandler_CreateAppServerAccountStoresOnlyProfileReference(t *
 	require.True(t, created.SkipDefaultGroupBind)
 }
 
+func TestOpenAIOAuthHandler_CreateAppServerAccountStoresRemoteTransport(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	adminService := newStubAdminService()
+	handler := &OpenAIOAuthHandler{
+		adminService: adminService,
+		appServerLoginService: &stubCodexAppServerLoginService{
+			login: &service.CodexAppServerLogin{
+				SessionID: "remote-app-server-session",
+				Status:    service.CodexAppServerLoginStatusCompleted,
+			},
+			transportKind: service.CodexAppServerTransportWebSocket,
+		},
+	}
+	router := gin.New()
+	router.POST("/admin/openai/app-server/login/:session_id/create-account", handler.CreateAppServerAccount)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/admin/openai/app-server/login/remote-app-server-session/create-account",
+		strings.NewReader(`{"name":"本机官方运行时","concurrency":1,"priority":1}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Len(t, adminService.createdAccounts, 1)
+	created := adminService.createdAccounts[0]
+	require.Equal(t, service.CodexAppServerTransportWebSocket, created.Extra["app_server_transport"])
+	require.NotContains(t, created.Credentials, "access_token")
+	require.NotContains(t, created.Credentials, "refresh_token")
+}
+
 func TestAccountHandler_RejectsSchedulingManagedAppServerProfile(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	adminService := newStubAdminService()
@@ -144,6 +177,7 @@ type stubCodexAppServerLoginService struct {
 	login              *service.CodexAppServerLogin
 	mode               service.CodexAppServerLoginMode
 	cancelledSessionID string
+	transportKind      string
 }
 
 func (s *stubCodexAppServerLoginService) StartLogin(_ context.Context, mode service.CodexAppServerLoginMode) (*service.CodexAppServerLogin, error) {
@@ -164,4 +198,11 @@ func (s *stubCodexAppServerLoginService) FinalizeLogin(_ string) error { return 
 func (s *stubCodexAppServerLoginService) CancelLogin(_ context.Context, sessionID string) error {
 	s.cancelledSessionID = sessionID
 	return nil
+}
+
+func (s *stubCodexAppServerLoginService) TransportKind() string {
+	if s.transportKind == "" {
+		return service.CodexAppServerTransportStdio
+	}
+	return s.transportKind
 }

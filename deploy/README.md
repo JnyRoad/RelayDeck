@@ -28,6 +28,7 @@ This directory contains files for deploying Sub2API on Linux servers and Apple-s
 | `DATAMANAGEMENTD_CN.md` | datamanagementd 部署与联动说明（中文） |
 | `config.example.yaml` | Example configuration file |
 | `EDGE_SECURITY.md` | Reverse proxy, CDN/WAF, trusted proxy, and ingress hardening guide |
+| `host/README.md` | Use this Mac's Codex app-server from the Docker deployment |
 
 ---
 
@@ -49,6 +50,14 @@ See [APPLE_CONTAINER.md](./APPLE_CONTAINER.md) for configuration, upgrades, pers
 ---
 
 ## Docker Deployment (Recommended)
+
+### Use This Mac's Codex App-Server
+
+For a Docker Desktop deployment on this Mac, the optional host bridge lets the
+container connect to a loopback-only official Codex app-server while keeping
+the Mac's Codex credential directory private. See
+[host/README.md](./host/README.md) for setup, token rotation, diagnostics, and
+rollback. Do not mount `~/.codex` into the RelayDeck container.
 
 ### Method 1: One-Click Deployment (Recommended)
 

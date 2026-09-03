@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.relaydeck.codex-app-server</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__BRIDGE_SCRIPT__</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>__USER_HOME__</string>
+    <key>CODEX_HOME</key>
+    <string>__CODEX_HOME__</string>
+    <key>CODEX_BIN</key>
+    <string>__CODEX_BIN__</string>
+    <key>RELAYDECK_HOST_BRIDGE_DIR</key>
+    <string>__BRIDGE_DIR__</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>__BRIDGE_DIR__/stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>__BRIDGE_DIR__/stderr.log</string>
+</dict>
+</plist>
