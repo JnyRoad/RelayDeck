@@ -17,11 +17,12 @@ if [ "$token_mode" != "600" ]; then
 	exit 1
 fi
 
+PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+export PATH
+
 if [ -n "${CODEX_BIN:-}" ]; then
 	codex_bin="$CODEX_BIN"
 else
-	PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-	export PATH
 	codex_bin=$(command -v codex || true)
 fi
 
