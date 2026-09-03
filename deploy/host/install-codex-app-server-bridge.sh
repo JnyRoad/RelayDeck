@@ -60,7 +60,7 @@ fi
 	exit 1
 }
 for required_flag in --listen --ws-auth --ws-token-file; do
-	if ! "$codex_bin" app-server --help 2>&1 | grep -F -- "$required_flag" >/dev/null; then
+	if ! "$codex_bin" app-server --help 2>&1 | grep -E -- "(^|[[:space:]])${required_flag}([[:space:]=]|$)" >/dev/null; then
 		printf '%s\n' "RelayDeck Codex bridge requires an app-server supporting $required_flag." >&2
 		exit 1
 	fi
