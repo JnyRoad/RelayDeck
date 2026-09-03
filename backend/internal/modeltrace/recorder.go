@@ -44,7 +44,6 @@ type StartInput struct {
 	RequestID string
 	Route     string
 	Protocol  string
-	Method    string
 }
 
 // PayloadInput carries a bounded copy of one body plus original-stream

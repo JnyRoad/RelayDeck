@@ -22,6 +22,8 @@ type modelTraceRecorderStub struct {
 	started       []modeltrace.StartInput
 	payloads      []modeltrace.PayloadInput
 	finished      []modeltrace.FinishInput
+	payloadCtxErr []error
+	finishCtxErr  []error
 	payloadErr    error
 	tracingActive bool
 }
@@ -35,15 +37,30 @@ func (s *modelTraceRecorderStub) Start(_ context.Context, input modeltrace.Start
 
 // RecordPayload keeps the raw middleware boundary input for assertions and can
 // simulate a best-effort persistence failure without changing handler output.
-func (s *modelTraceRecorderStub) RecordPayload(_ context.Context, _ modeltrace.TraceHandle, input modeltrace.PayloadInput) error {
+func (s *modelTraceRecorderStub) RecordPayload(ctx context.Context, _ modeltrace.TraceHandle, input modeltrace.PayloadInput) error {
 	s.payloads = append(s.payloads, input)
+	s.payloadCtxErr = append(s.payloadCtxErr, ctx.Err())
 	return s.payloadErr
 }
 
 // Finish records the computed terminal state for assertions without persistence.
-func (s *modelTraceRecorderStub) Finish(_ context.Context, _ modeltrace.TraceHandle, input modeltrace.FinishInput) error {
+func (s *modelTraceRecorderStub) Finish(ctx context.Context, _ modeltrace.TraceHandle, input modeltrace.FinishInput) error {
 	s.finished = append(s.finished, input)
+	s.finishCtxErr = append(s.finishCtxErr, ctx.Err())
 	return nil
+}
+
+// partialTraceResponseWriter simulates a downstream writer that accepts only
+// a prefix, so the trace wrapper can prove it records delivered bytes only.
+type partialTraceResponseWriter struct {
+	gin.ResponseWriter
+	n int
+}
+
+// Write returns the configured successful byte count without claiming the
+// unsent suffix was delivered to a client.
+func (w *partialTraceResponseWriter) Write([]byte) (int, error) {
+	return w.n, nil
 }
 
 // TestModelCallTraceMiddlewarePreservesRequestAndRecordsRoundTrip verifies that
@@ -190,6 +207,45 @@ func TestModelCallTraceMiddlewareCapturesResolvedIdentity(t *testing.T) {
 	}
 	if finished.RequestedModel != "public-model" || finished.UpstreamModel != "upstream-model" {
 		t.Fatalf("finish models = %#v", finished)
+	}
+}
+
+// TestModelCallTraceMiddlewarePersistsAfterClientCancellation verifies that a
+// cancellation changes the trace outcome but does not cancel final trace I/O.
+func TestModelCallTraceMiddlewarePersistsAfterClientCancellation(t *testing.T) {
+	recorder := &modelTraceRecorderStub{tracingActive: true}
+	router := newModelTraceTestRouter(recorder, func(c *gin.Context) {
+		requestCtx, cancel := context.WithCancel(c.Request.Context())
+		c.Request = c.Request.WithContext(requestCtx)
+		cancel()
+		c.String(http.StatusOK, "client-visible")
+	})
+
+	_ = doModelTraceRequest(router, http.MethodPost, "/v1/chat/completions", `{"model":"gpt-test"}`)
+
+	if len(recorder.payloadCtxErr) != 2 || recorder.payloadCtxErr[0] != nil || recorder.payloadCtxErr[1] != nil || len(recorder.finishCtxErr) != 1 || recorder.finishCtxErr[0] != nil {
+		t.Fatalf("trace persistence inherited cancelled request context: payload=%#v finish=%#v", recorder.payloadCtxErr, recorder.finishCtxErr)
+	}
+	if len(recorder.finished) != 1 || recorder.finished[0].Outcome != modeltrace.OutcomeClientCancelled {
+		t.Fatalf("finish outcome=%#v, want client cancelled", recorder.finished)
+	}
+}
+
+// TestTraceResponseWriterRecordsOnlyDeliveredBytes verifies that a partial
+// downstream write cannot make unsent response suffixes appear in a trace.
+func TestTraceResponseWriterRecordsOnlyDeliveredBytes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	writer := newTraceResponseWriter(&partialTraceResponseWriter{ResponseWriter: ctx.Writer, n: 3}, 32)
+
+	written, err := writer.Write([]byte("abcdef"))
+
+	if err != nil || written != 3 {
+		t.Fatalf("write result = (%d, %v), want (3, nil)", written, err)
+	}
+	payload := writer.Payload(modeltrace.PayloadKindClientResponse, "text/plain")
+	if string(payload.Body) != "abc" || payload.OriginalBytes != 3 {
+		t.Fatalf("captured response payload = %#v, want delivered prefix only", payload)
 	}
 }
 

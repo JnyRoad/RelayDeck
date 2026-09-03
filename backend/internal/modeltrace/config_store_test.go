@@ -46,8 +46,8 @@ func TestSettingsConfigStoreDefaultsToDisabled(t *testing.T) {
 	if config.Enabled || config.PayloadCaptureEnabled {
 		t.Fatalf("default trace config = %#v, want tracing and payload capture disabled", config)
 	}
-	if config.RetentionDays != DefaultRetentionDays || !config.AutoCleanupEnabled {
-		t.Fatalf("default trace config = %#v, want %d-day automatic cleanup", config, DefaultRetentionDays)
+	if config.RetentionDays != DefaultRetentionDays || config.AutoCleanupEnabled {
+		t.Fatalf("default trace config = %#v, want %d-day cleanup disabled", config, DefaultRetentionDays)
 	}
 }
 

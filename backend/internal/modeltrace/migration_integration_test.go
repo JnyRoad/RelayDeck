@@ -76,7 +76,8 @@ func TestModelTraceMigrationCascadesPayloads(t *testing.T) {
 	require.Zero(t, payloadCount)
 }
 
-// TestPostgresRepositoryListsAndReadsDetails 验证索引列表不会丢失调用摘要，详情只按 trace ID 读取关联密文。
+// TestPostgresRepositoryListsAndReadsDetails verifies that detail headers omit
+// ciphertext and the selected payload query reads only the requested body.
 func TestPostgresRepositoryListsAndReadsDetails(t *testing.T) {
 	db := openModelTraceIntegrationDB(t)
 	ctx := context.Background()
@@ -109,7 +110,10 @@ func TestPostgresRepositoryListsAndReadsDetails(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "trace-query-canary", detail.Trace.TraceID)
 	require.Len(t, detail.Payloads, 1)
-	require.Equal(t, "encrypted-query-canary", detail.Payloads[0].Ciphertext)
+	require.Empty(t, detail.Payloads[0].Ciphertext)
+	payload, err := repository.GetPayload(ctx, "trace-query-canary", PayloadKindClientRequest, 0)
+	require.NoError(t, err)
+	require.Equal(t, "encrypted-query-canary", payload.Ciphertext)
 }
 
 // TestPostgresRepositoryPreviewsAndDeletesExpired 验证清理只命中 expires_at 已过期的调用，并汇总级联正文统计。

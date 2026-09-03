@@ -76,7 +76,6 @@ func (t *WebSocketTurnTracer) Begin(ctx context.Context, turn int, request []byt
 		RequestID: t.requestID,
 		Route:     t.route,
 		Protocol:  "websocket",
-		Method:    "GET",
 	})
 	if err != nil || !handle.Enabled {
 		return
@@ -127,7 +126,7 @@ func (t *WebSocketTurnTracer) AppendClientFrame(ctx context.Context, turn int, f
 	if isWebSocketTerminalFrame(frame) {
 		state.terminalSeen = true
 	}
-	ready := t.readyToFinalizeLocked(state, state.terminalSeen)
+	ready := t.readyToFinalizeLocked(turn, state, state.terminalSeen)
 	t.mu.Unlock()
 	t.persistFinalizedTurn(ctx, ready)
 }
@@ -146,7 +145,7 @@ func (t *WebSocketTurnTracer) Complete(ctx context.Context, turn int, input Fini
 	}
 	copyInput := input
 	state.finish = &copyInput
-	ready := t.readyToFinalizeLocked(state, state.terminalSeen)
+	ready := t.readyToFinalizeLocked(turn, state, state.terminalSeen)
 	t.mu.Unlock()
 	t.persistFinalizedTurn(ctx, ready)
 }
@@ -160,11 +159,11 @@ func (t *WebSocketTurnTracer) Close(ctx context.Context) {
 	}
 	t.mu.Lock()
 	ready := make([]websocketFinalizedTurn, 0, len(t.turns))
-	for _, state := range t.turns {
+	for turn, state := range t.turns {
 		if state.finish == nil {
 			state.finish = &FinishInput{Outcome: OutcomePartial, Stream: true}
 		}
-		if finalized := t.readyToFinalizeLocked(state, true); finalized != nil {
+		if finalized := t.readyToFinalizeLocked(turn, state, true); finalized != nil {
 			ready = append(ready, *finalized)
 		}
 	}
@@ -184,8 +183,8 @@ type websocketFinalizedTurn struct {
 }
 
 // readyToFinalizeLocked returns a snapshot when the turn has result metadata
-// and finalization is permitted by the current caller. The caller holds t.mu.
-func (t *WebSocketTurnTracer) readyToFinalizeLocked(state *webSocketTraceTurn, allow bool) *websocketFinalizedTurn {
+// and removes its mutable buffers before persistence. The caller holds t.mu.
+func (t *WebSocketTurnTracer) readyToFinalizeLocked(turn int, state *webSocketTraceTurn, allow bool) *websocketFinalizedTurn {
 	if t == nil || state == nil || state.finalized || state.finish == nil || !allow {
 		return nil
 	}
@@ -194,12 +193,14 @@ func (t *WebSocketTurnTracer) readyToFinalizeLocked(state *webSocketTraceTurn, a
 	finish.RequestBytes = state.requestBytes
 	finish.ResponseBytes = state.responseBytes
 	payload := websocketResponsePayload(state, t.captureLimit)
-	return &websocketFinalizedTurn{
+	finalized := &websocketFinalizedTurn{
 		handle:   state.handle,
 		payload:  payload,
 		finish:   finish,
 		recorder: t.recorder,
 	}
+	delete(t.turns, turn)
+	return finalized
 }
 
 // persistFinalizedTurn performs best-effort storage outside the tracer lock.

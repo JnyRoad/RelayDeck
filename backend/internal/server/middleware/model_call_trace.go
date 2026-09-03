@@ -2,6 +2,7 @@
 package middleware
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"hash"
@@ -30,7 +31,6 @@ func NewModelCallTraceMiddleware(recorder modeltrace.Recorder) gin.HandlerFunc {
 			RequestID: ensureClientRequestID(c),
 			Route:     traceRoute(c),
 			Protocol:  "sync",
-			Method:    c.Request.Method,
 		})
 		if err != nil || !handle.Enabled {
 			c.Next()
@@ -44,14 +44,16 @@ func NewModelCallTraceMiddleware(recorder modeltrace.Recorder) gin.HandlerFunc {
 
 		c.Next()
 
+		traceCtx, cancelTrace := tracePersistenceContext(c.Request.Context())
+		defer cancelTrace()
 		requestPayload := requestCapture.Payload(modeltrace.PayloadKindClientRequest, c.GetHeader("Content-Type"))
-		_ = recorder.RecordPayload(c.Request.Context(), handle, requestPayload)
+		_ = recorder.RecordPayload(traceCtx, handle, requestPayload)
 		responseKind := modeltrace.PayloadKindClientResponse
 		if c.Writer.Status() >= http.StatusBadRequest {
 			responseKind = modeltrace.PayloadKindErrorResponse
 		}
 		responsePayload := responseCapture.Payload(responseKind, c.Writer.Header().Get("Content-Type"))
-		_ = recorder.RecordPayload(c.Request.Context(), handle, responsePayload)
+		_ = recorder.RecordPayload(traceCtx, handle, responsePayload)
 
 		firstByteMS := responseCapture.FirstByteMS(startedAt)
 		finishInput := modeltrace.FinishInput{
@@ -64,8 +66,17 @@ func NewModelCallTraceMiddleware(recorder modeltrace.Recorder) gin.HandlerFunc {
 			ResponseBytes: responsePayload.OriginalBytes,
 		}
 		populateTraceFinishIdentity(c, &finishInput)
-		_ = recorder.Finish(c.Request.Context(), handle, finishInput)
+		_ = recorder.Finish(traceCtx, handle, finishInput)
 	}
+}
+
+// tracePersistenceContext preserves completed handler values while decoupling
+// best-effort tracing from a client disconnect and bounding database work.
+func tracePersistenceContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 }
 
 // populateTraceFinishIdentity 读取鉴权和路由完成后形成的可信上下文，不读取客户端认证原文。
@@ -192,16 +203,30 @@ func newTraceResponseWriter(writer gin.ResponseWriter, limit int) *traceResponse
 	}
 }
 
-// Write records the exact bytes passed to Gin before delegating their delivery.
+// Write records only the bytes Gin reports as successfully delivered.
 func (w *traceResponseWriter) Write(body []byte) (int, error) {
-	w.record(body)
-	return w.ResponseWriter.Write(body)
+	written, err := w.ResponseWriter.Write(body)
+	w.record(deliveredTraceBytes(body, written))
+	return written, err
 }
 
-// WriteString records streamed string chunks before delegating to Gin.
+// WriteString records only the delivered prefix of a streamed string chunk.
 func (w *traceResponseWriter) WriteString(value string) (int, error) {
-	w.record([]byte(value))
-	return w.ResponseWriter.WriteString(value)
+	written, err := w.ResponseWriter.WriteString(value)
+	w.record(deliveredTraceBytes([]byte(value), written))
+	return written, err
+}
+
+// deliveredTraceBytes clamps an untrusted writer count to the supplied buffer
+// before the trace recorder observes it.
+func deliveredTraceBytes(body []byte, written int) []byte {
+	if written <= 0 {
+		return nil
+	}
+	if written >= len(body) {
+		return body
+	}
+	return body[:written]
 }
 
 // record appends a response chunk to the bounded capture without performing I/O.

@@ -54,7 +54,7 @@ func DefaultTraceConfig() TraceConfig {
 	return TraceConfig{
 		Enabled:               false,
 		PayloadCaptureEnabled: false,
-		AutoCleanupEnabled:    true,
+		AutoCleanupEnabled:    false,
 		RetentionDays:         DefaultRetentionDays,
 	}
 }

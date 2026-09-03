@@ -9,6 +9,7 @@ import (
 
 // TraceFilter 定义管理端列表可用的轻量索引筛选条件，不包含任何正文搜索字段。
 type TraceFilter struct {
+	TraceID        string
 	UserID         *int64
 	APIKeyID       *int64
 	GroupID        *int64
@@ -16,7 +17,9 @@ type TraceFilter struct {
 	RequestID      string
 	Route          string
 	RequestedModel string
+	Protocol       string
 	Outcome        Outcome
+	CaptureStatus  CaptureStatus
 	StartAt        *time.Time
 	EndAt          *time.Time
 }
@@ -73,6 +76,7 @@ type TraceDetail struct {
 type TraceQueryRepository interface {
 	ListTraces(ctx context.Context, filter TraceFilter, page, pageSize int) ([]TraceSummary, int64, error)
 	GetTrace(ctx context.Context, traceID string) (TraceDetail, error)
+	GetPayload(ctx context.Context, traceID string, kind PayloadKind, attemptNo int) (TracePayload, error)
 }
 
 // Decryptor 只在管理员查看单条详情时按需解开已脱敏的正文。
@@ -108,7 +112,7 @@ func (s *QueryService) List(ctx context.Context, filter TraceFilter, page, pageS
 	return s.repository.ListTraces(ctx, filter, page, pageSize)
 }
 
-// Detail 返回一条调用及其按需解密正文；每个正文的失败独立降级为不可用状态。
+// Detail 返回一条调用头和可读取的正文种类；它从不读取或解密正文密文。
 func (s *QueryService) Detail(ctx context.Context, traceID string) (TraceDetail, error) {
 	if s == nil || s.repository == nil {
 		return TraceDetail{}, fmt.Errorf("model trace query repository is unavailable")
@@ -121,24 +125,70 @@ func (s *QueryService) Detail(ctx context.Context, traceID string) (TraceDetail,
 		return TraceDetail{}, err
 	}
 	for index := range detail.Payloads {
-		payload := &detail.Payloads[index]
-		payload.ContentStatus = "not_captured"
-		if payload.Ciphertext == "" {
-			continue
-		}
-		if s.decryptor == nil {
-			payload.Ciphertext = ""
-			payload.ContentStatus = "unavailable"
-			continue
-		}
-		content, decryptErr := s.decryptor.Decrypt(payload.Ciphertext)
-		payload.Ciphertext = ""
-		if decryptErr != nil {
-			payload.ContentStatus = "unavailable"
-			continue
-		}
-		payload.Content = content
-		payload.ContentStatus = "available"
+		detail.Payloads[index].ContentStatus = payloadContentStatus(detail.Payloads[index])
+		detail.Payloads[index].Ciphertext = ""
 	}
 	return detail, nil
+}
+
+// Payload decrypts exactly one administrator-selected payload after the
+// detail header has already identified its kind and attempt number.
+func (s *QueryService) Payload(ctx context.Context, traceID string, kind PayloadKind, attemptNo int) (TracePayload, error) {
+	if s == nil || s.repository == nil {
+		return TracePayload{}, fmt.Errorf("model trace query repository is unavailable")
+	}
+	traceID = strings.TrimSpace(traceID)
+	if traceID == "" {
+		return TracePayload{}, fmt.Errorf("model trace id is required")
+	}
+	if !isReadablePayloadKind(kind) {
+		return TracePayload{}, fmt.Errorf("model trace payload kind is invalid")
+	}
+	if attemptNo < 0 {
+		return TracePayload{}, fmt.Errorf("model trace payload attempt number is invalid")
+	}
+	payload, err := s.repository.GetPayload(ctx, traceID, kind, attemptNo)
+	if err != nil {
+		return TracePayload{}, err
+	}
+	payload.ContentStatus = payloadContentStatus(payload)
+	if payload.Ciphertext == "" {
+		return payload, nil
+	}
+	if s.decryptor == nil {
+		payload.Ciphertext = ""
+		payload.ContentStatus = "unavailable"
+		return payload, nil
+	}
+	content, decryptErr := s.decryptor.Decrypt(payload.Ciphertext)
+	payload.Ciphertext = ""
+	if decryptErr != nil {
+		payload.ContentStatus = "unavailable"
+		return payload, nil
+	}
+	payload.Content = content
+	payload.ContentStatus = "available"
+	return payload, nil
+}
+
+// payloadContentStatus derives the UI-safe availability hint without loading
+// ciphertext. Only complete or redacted records may have readable content.
+func payloadContentStatus(payload TracePayload) string {
+	switch payload.CaptureStatus {
+	case CaptureStatusComplete, CaptureStatusRedacted:
+		return "available"
+	default:
+		return "not_captured"
+	}
+}
+
+// isReadablePayloadKind limits plaintext access to the client-visible body
+// types promised by the administrator API contract.
+func isReadablePayloadKind(kind PayloadKind) bool {
+	switch kind {
+	case PayloadKindClientRequest, PayloadKindClientResponse, PayloadKindErrorResponse:
+		return true
+	default:
+		return false
+	}
 }

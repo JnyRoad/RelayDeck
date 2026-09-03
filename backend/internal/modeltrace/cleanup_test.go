@@ -14,6 +14,8 @@ type traceCleanupRepositoryStub struct {
 	deleteCalls  int
 	startedRuns  int
 	finishedRuns int
+	deleteErr    error
+	finishCtxErr error
 }
 
 // PreviewExpired 返回预置的到期调用计数与存储量估算。
@@ -25,7 +27,7 @@ func (s *traceCleanupRepositoryStub) PreviewExpired(context.Context, time.Time) 
 // DeleteExpired 返回预置的一批删除结果。
 func (s *traceCleanupRepositoryStub) DeleteExpired(context.Context, time.Time, int) (CleanupResult, error) {
 	s.deleteCalls++
-	return s.deleted, nil
+	return s.deleted, s.deleteErr
 }
 
 // StartCleanupRun 返回确定的清理运行标识。
@@ -35,9 +37,27 @@ func (s *traceCleanupRepositoryStub) StartCleanupRun(context.Context, CleanupMod
 }
 
 // FinishCleanupRun 记录终态统计但不写入真实审计表。
-func (s *traceCleanupRepositoryStub) FinishCleanupRun(context.Context, int64, CleanupResult, error) error {
+func (s *traceCleanupRepositoryStub) FinishCleanupRun(ctx context.Context, _ int64, _ CleanupResult, _ error) error {
 	s.finishedRuns++
+	s.finishCtxErr = ctx.Err()
 	return nil
+}
+
+// blockingTraceConfigStore holds the automatic loop in Load so shutdown tests
+// can prove resource cleanup waits for its worker before returning.
+type blockingTraceConfigStore struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+// Load signals that the worker is running, then waits for the test to release it.
+func (s blockingTraceConfigStore) Load(context.Context) (TraceConfig, error) {
+	select {
+	case s.started <- struct{}{}:
+	default:
+	}
+	<-s.release
+	return TraceConfig{}, nil
 }
 
 // TestCleanupServiceSkipsAutomaticRunWhenDisabled 验证自动清理开关关闭时不会发起删除或运行记录。
@@ -87,5 +107,45 @@ func TestCleanupServicePreviewNeverDeletes(t *testing.T) {
 	}
 	if preview.ExpiredTraces != 5 || repository.previewCalls != 1 || repository.deleteCalls != 0 || repository.startedRuns != 0 {
 		t.Fatalf("cleanup preview=%#v repository=%#v", preview, repository)
+	}
+}
+
+// TestCleanupServiceFinalizesRunAfterCallerCancellation verifies that a
+// cancelled manual cleanup still writes a bounded final audit state.
+func TestCleanupServiceFinalizesRunAfterCallerCancellation(t *testing.T) {
+	repository := &traceCleanupRepositoryStub{deleteErr: context.Canceled}
+	service := NewCleanupService(traceConfigStoreStub{config: TraceConfig{RetentionDays: 7}}, repository)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := service.RunManual(ctx, 1)
+
+	if err == nil {
+		t.Fatal("cancelled cleanup returned nil error")
+	}
+	if repository.finishedRuns != 1 || repository.finishCtxErr != nil {
+		t.Fatalf("cleanup finalization = runs:%d context error:%v, want one uncancelled audit write", repository.finishedRuns, repository.finishCtxErr)
+	}
+}
+
+// TestCleanupServiceStopWaitsForWorker verifies that shutdown does not permit
+// callers to release database resources while the cleanup loop is still live.
+func TestCleanupServiceStopWaitsForWorker(t *testing.T) {
+	store := blockingTraceConfigStore{started: make(chan struct{}, 1), release: make(chan struct{})}
+	service := NewCleanupService(store, &traceCleanupRepositoryStub{})
+	service.Start()
+	select {
+	case <-store.started:
+	case <-time.After(time.Second):
+		t.Fatal("cleanup worker did not start")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := service.Stop(ctx); err == nil {
+		t.Fatal("stop returned before its running cleanup worker exited")
+	}
+	close(store.release)
+	if err := service.Stop(context.Background()); err != nil {
+		t.Fatalf("wait for stopped cleanup worker: %v", err)
 	}
 }

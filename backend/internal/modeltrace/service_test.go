@@ -147,6 +147,38 @@ func TestServiceNeverStoresTruncatedRawPrefix(t *testing.T) {
 	}
 }
 
+// TestServiceNeverStoresCaptureLimitedBody verifies that the storage-layer
+// limit follows the same metadata-only rule as an already-truncated reader.
+func TestServiceNeverStoresCaptureLimitedBody(t *testing.T) {
+	repository := &traceRepositoryStub{}
+	encryptor := &traceEncryptorStub{}
+	service := NewService(traceConfigStoreStub{config: TraceConfig{Enabled: true, PayloadCaptureEnabled: true, RetentionDays: 7}}, repository, encryptor)
+	handle, err := service.Start(context.Background(), StartInput{Route: "/v1/chat/completions"})
+	if err != nil {
+		t.Fatalf("start trace: %v", err)
+	}
+
+	err = service.RecordPayload(context.Background(), handle, PayloadInput{
+		Kind:        PayloadKindClientRequest,
+		ContentType: "application/json",
+		Body:        []byte(`{"message":"` + strings.Repeat("x", DefaultPayloadLimitBytes) + `"}`),
+	})
+
+	if err != nil {
+		t.Fatalf("record capture-limited payload: %v", err)
+	}
+	if len(encryptor.inputs) != 0 {
+		t.Fatalf("capture-limited payload reached encryptor: %#v", encryptor.inputs)
+	}
+	if len(repository.payloads) != 1 {
+		t.Fatalf("stored payload count = %d, want 1", len(repository.payloads))
+	}
+	stored := repository.payloads[0]
+	if stored.CaptureStatus != CaptureStatusTruncated || stored.Ciphertext != "" || stored.StoredBytes != 0 {
+		t.Fatalf("stored capture-limited payload = %#v, want metadata only", stored)
+	}
+}
+
 // TestServiceDerivesModelSummary 验证列表页所需模型摘要从完整 JSON 中提取，但不额外保存原始正文。
 func TestServiceDerivesModelSummary(t *testing.T) {
 	repository := &traceRepositoryStub{}

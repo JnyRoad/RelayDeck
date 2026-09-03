@@ -52,6 +52,23 @@ func TestWebSocketTurnTracerDropsOversizedOrInvalidResponses(t *testing.T) {
 	require.Len(t, recorder.finishes, 1)
 }
 
+// TestWebSocketTurnTracerReleasesFinalizedTurn verifies that completed turns
+// do not accumulate their request and response buffers for a long-lived socket.
+func TestWebSocketTurnTracerReleasesFinalizedTurn(t *testing.T) {
+	recorder := &webSocketRecorderStub{}
+	tracer := NewWebSocketTurnTracer(recorder, "connection-request", "/v1/responses")
+
+	tracer.Begin(context.Background(), 1, []byte(`{"type":"response.create"}`))
+	tracer.AppendClientFrame(context.Background(), 1, []byte(`{"type":"response.completed"}`))
+	tracer.Complete(context.Background(), 1, FinishInput{Outcome: OutcomeSucceeded, Stream: true})
+
+	tracer.mu.Lock()
+	defer tracer.mu.Unlock()
+	if len(tracer.turns) != 0 {
+		t.Fatalf("retained finalized turns = %#v, want none", tracer.turns)
+	}
+}
+
 // webSocketRecorderStub captures recorder inputs without encrypting data so
 // WebSocket aggregation behavior can be unit-tested in isolation.
 type webSocketRecorderStub struct {

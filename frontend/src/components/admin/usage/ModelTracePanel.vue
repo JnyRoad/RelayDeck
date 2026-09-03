@@ -55,8 +55,8 @@
         <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
           <tr v-if="loading"><td colspan="5" class="px-3 py-8 text-center text-gray-500">{{ t('common.loading') }}</td></tr>
           <tr v-else-if="items.length === 0"><td colspan="5" class="px-3 py-8 text-center text-gray-500">{{ t('admin.modelTrace.empty') }}</td></tr>
-          <tr v-for="item in items" :key="item.trace_id" :data-testid="`model-trace-row-${item.trace_id}`" class="cursor-pointer hover:bg-primary-50 dark:hover:bg-primary-950/20" @click="openDetail(item.trace_id)">
-            <td class="whitespace-nowrap px-3 py-2 text-gray-600 dark:text-gray-300">{{ formatTime(item.created_at) }}</td>
+          <tr v-for="item in items" :key="item.trace_id" class="hover:bg-primary-50 dark:hover:bg-primary-950/20">
+            <td class="whitespace-nowrap px-3 py-2 text-gray-600 dark:text-gray-300"><button :data-testid="`model-trace-row-${item.trace_id}`" class="rounded text-left underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500" @click="openDetail(item.trace_id)">{{ formatTime(item.created_at) }}</button></td>
             <td class="max-w-56 truncate px-3 py-2 font-mono text-xs">{{ item.route }}</td>
             <td class="max-w-48 truncate px-3 py-2">{{ item.requested_model || item.response_model || '—' }}</td>
             <td class="px-3 py-2"><span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs dark:bg-dark-700">{{ item.outcome }} · {{ item.status_code ?? '—' }}</span></td>
@@ -77,13 +77,14 @@
       </div>
       <div class="grid gap-3 p-4 lg:grid-cols-[12rem_minmax(0,1fr)]">
         <div class="space-y-1">
-          <button v-for="payload in detail.payloads" :key="`${payload.kind}-${payload.attempt_no}`" class="block w-full rounded px-3 py-2 text-left text-sm" :class="activePayload === payload ? 'bg-primary-100 text-primary-800 dark:bg-primary-900/50 dark:text-primary-200' : 'hover:bg-gray-100 dark:hover:bg-dark-800'" @click="activePayload = payload">
+          <button v-for="payload in detail.payloads" :key="payloadKey(payload)" :data-testid="`model-trace-payload-${payloadKey(payload)}`" class="block w-full rounded px-3 py-2 text-left text-sm" :class="activePayload === payload ? 'bg-primary-100 text-primary-800 dark:bg-primary-900/50 dark:text-primary-200' : 'hover:bg-gray-100 dark:hover:bg-dark-800'" @click="selectPayload(payload)">
             {{ payload.kind }}<span class="block text-xs opacity-70">{{ payload.content_status }}</span>
           </button>
         </div>
         <div v-if="activePayload" class="min-w-0">
           <div class="mb-2 flex items-center justify-between gap-2"><span class="text-sm text-gray-500">{{ activePayload.content_type || 'text/plain' }} · {{ formatBytes(activePayload.original_bytes) }}</span><button class="btn btn-secondary btn-sm" :disabled="activePayload.content_status !== 'available'" @click="copyPayload">{{ t('common.copy') }}</button></div>
-          <pre v-if="activePayload.content_status === 'available'" class="max-h-[28rem] overflow-auto rounded-lg bg-slate-950 p-4 text-xs leading-5 text-slate-100 whitespace-pre-wrap break-words">{{ activePayload.content }}</pre>
+          <div v-if="loadingPayloadKey === payloadKey(activePayload)" class="rounded-lg bg-gray-50 p-6 text-sm text-gray-500 dark:bg-dark-800">{{ t('common.loading') }}</div>
+          <pre v-else-if="activePayload.content_status === 'available'" class="max-h-[28rem] overflow-auto rounded-lg bg-slate-950 p-4 text-xs leading-5 text-slate-100 whitespace-pre-wrap break-words">{{ activePayload.content }}</pre>
           <div v-else class="rounded-lg bg-gray-50 p-6 text-sm text-gray-500 dark:bg-dark-800">{{ t('admin.modelTrace.detail.contentUnavailable', { status: activePayload.content_status }) }}</div>
         </div>
       </div>
@@ -110,24 +111,32 @@ const saving = ref(false)
 const cleaning = ref(false)
 const previewing = ref(false)
 const errorMessage = ref('')
+const loadingPayloadKey = ref('')
 const outcomes: ModelTraceOutcome[] = ['succeeded', 'failed', 'blocked', 'client_cancelled', 'partial']
 const filters = reactive<Pick<ModelTraceQueryParams, 'request_id' | 'requested_model' | 'outcome'>>({ request_id: '', requested_model: '', outcome: undefined })
-const config = reactive<ModelTraceConfig>({ enabled: false, payload_capture_enabled: false, auto_cleanup_enabled: true, retention_days: 7 })
+const config = reactive<ModelTraceConfig>({ enabled: false, payload_capture_enabled: false, auto_cleanup_enabled: false, retention_days: 7 })
 const listParams = computed<ModelTraceQueryParams>(() => ({ page: page.value, page_size: pageSize, request_id: filters.request_id || undefined, requested_model: filters.requested_model || undefined, outcome: filters.outcome || undefined }))
+let listRequestVersion = 0
+let detailRequestVersion = 0
+let payloadRequestVersion = 0
+let configRequestVersion = 0
 
 /** 同步加载索引与策略；详情正文不会随列表请求下载。 */
 const load = async () => {
+	const requestVersion = ++listRequestVersion
+	const configVersionAtStart = configRequestVersion
   loading.value = true
   errorMessage.value = ''
   try {
     const [listResult, configResult] = await Promise.all([modelTraceAPI.list(listParams.value), modelTraceAPI.getConfig()])
+		if (requestVersion !== listRequestVersion) return
     items.value = listResult.items || []
     total.value = listResult.total || 0
-    Object.assign(config, configResult)
+		if (configVersionAtStart === configRequestVersion) Object.assign(config, configResult)
   } catch {
-    errorMessage.value = t('admin.modelTrace.errors.load')
+		if (requestVersion === listRequestVersion) errorMessage.value = t('admin.modelTrace.errors.load')
   } finally {
-    loading.value = false
+		if (requestVersion === listRequestVersion) loading.value = false
   }
 }
 
@@ -143,29 +152,59 @@ const changePage = (nextPage: number) => {
   void load()
 }
 
-/** 按需读取单条安全详情，并默认显示第一份可见正文。 */
+/** 按需读取单条安全详情；正文只在管理员打开其页签后才会请求。 */
 const openDetail = async (traceID: string) => {
+	const requestVersion = ++detailRequestVersion
+	payloadRequestVersion++
+	detail.value = null
+	activePayload.value = null
+	loadingPayloadKey.value = ''
   errorMessage.value = ''
   try {
     const result = await modelTraceAPI.getDetail(traceID)
+		if (requestVersion !== detailRequestVersion) return
     detail.value = result
-    activePayload.value = result.payloads[0] ?? null
   } catch {
-    errorMessage.value = t('admin.modelTrace.errors.detail')
+		if (requestVersion === detailRequestVersion) errorMessage.value = t('admin.modelTrace.errors.detail')
   }
 }
 
+/** 仅在选中正文页签后读取该一份内容，并忽略过期的并发响应。 */
+const selectPayload = (payload: ModelTracePayload) => {
+	activePayload.value = payload
+	if (!detail.value || payload.content_status !== 'available') return
+	const detailVersion = detailRequestVersion
+	const requestVersion = ++payloadRequestVersion
+	const key = payloadKey(payload)
+	loadingPayloadKey.value = key
+	void modelTraceAPI.getPayload(detail.value.trace.trace_id, payload.kind, payload.attempt_no).then((loaded) => {
+		if (detailVersion !== detailRequestVersion || requestVersion !== payloadRequestVersion || !detail.value) return
+		const current = detail.value.payloads.find((item) => payloadKey(item) === key)
+		if (!current) return
+		Object.assign(current, loaded)
+		activePayload.value = current
+	}).catch(() => {
+		if (detailVersion === detailRequestVersion && requestVersion === payloadRequestVersion) errorMessage.value = t('admin.modelTrace.errors.detail')
+	}).finally(() => {
+		if (requestVersion === payloadRequestVersion) loadingPayloadKey.value = ''
+	})
+}
+
+/** payloadKey 为异步加载和 Vue 列表提供一份稳定的正文种类标识。 */
+const payloadKey = (payload: ModelTracePayload) => `${payload.kind}-${payload.attempt_no}`
+
 /** 保存完整设置快照，并由后端校验留存天数与启用策略。 */
 const saveConfig = async () => {
+	const requestVersion = ++configRequestVersion
   saving.value = true
   errorMessage.value = ''
   try {
     const saved = await modelTraceAPI.updateConfig({ ...config, retention_days: Number(config.retention_days) })
-    Object.assign(config, saved)
+		if (requestVersion === configRequestVersion) Object.assign(config, saved)
   } catch {
-    errorMessage.value = t('admin.modelTrace.errors.save')
+		if (requestVersion === configRequestVersion) errorMessage.value = t('admin.modelTrace.errors.save')
   } finally {
-    saving.value = false
+		if (requestVersion === configRequestVersion) saving.value = false
   }
 }
 

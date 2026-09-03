@@ -1549,6 +1549,10 @@ func TestProxyResponsesWebSocketFromClientForGrokUsesXAIHTTPBridgeAndPreservesMa
 	}
 
 	errCh := make(chan error, 1)
+	type observedClientFrame struct {
+		turn int
+	}
+	clientFrames := make(chan observedClientFrame, 9)
 	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := coderws.Accept(w, r, &coderws.AcceptOptions{CompressionMode: coderws.CompressionContextTakeover})
 		if err != nil {
@@ -1582,6 +1586,9 @@ func TestProxyResponsesWebSocketFromClientForGrokUsesXAIHTTPBridgeAndPreservesMa
 					return "grok-4.3", nil
 				}
 				return originalModel, nil
+			},
+			ClientFrameWritten: func(turn int, _ []byte) {
+				clientFrames <- observedClientFrame{turn: turn}
 			},
 		})
 	}))
@@ -1640,6 +1647,17 @@ func TestProxyResponsesWebSocketFromClientForGrokUsesXAIHTTPBridgeAndPreservesMa
 	require.Equal(t, "response.output_text.delta", gjson.GetBytes(delta, "type").String())
 	require.Equal(t, "response.completed", gjson.GetBytes(completed, "type").String())
 	require.Equal(t, "resp_grok_ws_3", gjson.GetBytes(completed, "response.id").String())
+
+	observedTurns := make([]int, 0, 9)
+	for range 9 {
+		select {
+		case frame := <-clientFrames:
+			observedTurns = append(observedTurns, frame.turn)
+		case <-time.After(3 * time.Second):
+			t.Fatal("HTTP bridge did not report a client-visible frame")
+		}
+	}
+	require.Equal(t, []int{1, 1, 1, 2, 2, 2, 3, 3, 3}, observedTurns)
 
 	_ = clientConn.Close(coderws.StatusNormalClosure, "done")
 	select {

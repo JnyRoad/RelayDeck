@@ -62,10 +62,13 @@ export interface ModelTraceQueryParams {
   api_key_id?: number
   group_id?: number
   account_id?: number
+  trace_id?: string
   request_id?: string
   route?: string
   requested_model?: string
+  protocol?: string
   outcome?: ModelTraceOutcome
+  capture_status?: ModelTraceCaptureStatus
   start_time?: string
   end_time?: string
 }
@@ -83,9 +86,17 @@ export async function list(params: ModelTraceQueryParams): Promise<PaginatedResp
   return data
 }
 
-/** 按 trace ID 请求一条调用及其服务端已脱敏的按需正文。 */
+/** 按 trace ID 请求一条调用头和正文元数据，不读取或解密正文。 */
 export async function getDetail(traceID: string): Promise<ModelTraceDetail> {
   const { data } = await apiClient.get<ModelTraceDetail>(`/admin/model-traces/${encodeURIComponent(traceID)}`)
+  return data
+}
+
+/** 仅在管理员打开对应页签后请求一种已脱敏的正文。 */
+export async function getPayload(traceID: string, kind: ModelTracePayload['kind'], attemptNo = 0): Promise<ModelTracePayload> {
+  const { data } = await apiClient.get<ModelTracePayload>(`/admin/model-traces/${encodeURIComponent(traceID)}/payloads/${encodeURIComponent(kind)}`, {
+    params: { attempt_no: attemptNo },
+  })
   return data
 }
 
@@ -113,6 +124,6 @@ export async function runCleanup(): Promise<{ deleted_traces: number; deleted_pa
   return data
 }
 
-export const modelTraceAPI = { list, getDetail, getConfig, updateConfig, previewCleanup, runCleanup }
+export const modelTraceAPI = { list, getDetail, getPayload, getConfig, updateConfig, previewCleanup, runCleanup }
 
 export default modelTraceAPI

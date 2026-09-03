@@ -36,7 +36,6 @@ type TraceRecord struct {
 	RequestID string
 	Route     string
 	Protocol  string
-	Method    string
 	ExpiresAt time.Time
 	CreatedAt time.Time
 }
@@ -103,8 +102,8 @@ func (s *Service) Start(ctx context.Context, input StartInput) (TraceHandle, err
 	if !config.Enabled {
 		return TraceHandle{}, nil
 	}
-	if config.RetentionDays < 1 || config.RetentionDays > 90 {
-		return TraceHandle{}, fmt.Errorf("invalid model trace retention days: %d", config.RetentionDays)
+	if err := ValidateTraceConfig(config); err != nil {
+		return TraceHandle{}, err
 	}
 	if s.repository == nil {
 		return TraceHandle{}, fmt.Errorf("model trace repository is unavailable")
@@ -121,7 +120,6 @@ func (s *Service) Start(ctx context.Context, input StartInput) (TraceHandle, err
 		RequestID: input.RequestID,
 		Route:     input.Route,
 		Protocol:  input.Protocol,
-		Method:    input.Method,
 		ExpiresAt: createdAt.AddDate(0, 0, config.RetentionDays),
 		CreatedAt: createdAt,
 	}
@@ -162,13 +160,19 @@ func (s *Service) RecordPayload(ctx context.Context, handle TraceHandle, input P
 
 	captured := CaptureForStorage(input.ContentType, input.Body, DefaultPayloadLimitBytes)
 	record.CaptureStatus = captured.Status
-	record.StoredBytes = captured.StoredBytes
 	if record.OriginalBytes == 0 {
 		record.OriginalBytes = captured.OriginalBytes
 	}
 	if record.SHA256 == "" {
 		record.SHA256 = captured.SHA256
 	}
+	if captured.Status == CaptureStatusTruncated {
+		// A bounded prefix is not a safe diagnostic artifact: it may have lost
+		// its JSON structure and must remain metadata-only like reader truncation.
+		record.StoredBytes = 0
+		return s.repository.CreatePayload(ctx, record)
+	}
+	record.StoredBytes = captured.StoredBytes
 	if s.encryptor == nil {
 		return fmt.Errorf("model trace encryptor is unavailable")
 	}

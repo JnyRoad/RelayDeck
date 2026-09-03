@@ -9,9 +9,10 @@ import (
 )
 
 const (
-	traceCleanupInterval   = time.Hour
+	traceCleanupInterval   = 24 * time.Hour
 	traceCleanupBatchSize  = 500
 	traceCleanupMaxBatches = 100
+	traceCleanupFinishWait = 5 * time.Second
 )
 
 // CleanupMode 标识一次清理由保留期任务还是管理员手动操作触发。
@@ -55,11 +56,15 @@ type CleanupService struct {
 	interval    time.Duration
 	batchSize   int
 
-	startOnce sync.Once
-	stopOnce  sync.Once
-	stopCh    chan struct{}
-	runMu     sync.Mutex
-	running   bool
+	startOnce   sync.Once
+	stopOnce    sync.Once
+	stopCh      chan struct{}
+	doneCh      chan struct{}
+	lifecycleMu sync.Mutex
+	started     bool
+	stopped     bool
+	runMu       sync.Mutex
+	running     bool
 }
 
 // NewCleanupService 使用默认的一小时扫描周期和有界批量大小构建清理任务。
@@ -71,6 +76,7 @@ func NewCleanupService(configStore ConfigStore, repository CleanupRepository) *C
 		interval:    traceCleanupInterval,
 		batchSize:   traceCleanupBatchSize,
 		stopCh:      make(chan struct{}),
+		doneCh:      make(chan struct{}),
 	}
 }
 
@@ -80,16 +86,48 @@ func (s *CleanupService) Start() {
 		return
 	}
 	s.startOnce.Do(func() {
-		go s.runLoop()
+		s.lifecycleMu.Lock()
+		if s.stopped {
+			s.lifecycleMu.Unlock()
+			return
+		}
+		s.started = true
+		s.lifecycleMu.Unlock()
+		go func() {
+			defer close(s.doneCh)
+			s.runLoop()
+		}()
 	})
 }
 
-// Stop 停止周期扫描，并允许当前已开始的数据库批次自然完成。
-func (s *CleanupService) Stop() {
+// Stop stops the periodic worker and waits for it before callers close the
+// database. The supplied shutdown context bounds the wait without abandoning
+// a caller that can still safely wait for in-flight cleanup finalization.
+func (s *CleanupService) Stop(ctx context.Context) error {
 	if s == nil {
-		return
+		return nil
 	}
-	s.stopOnce.Do(func() { close(s.stopCh) })
+	s.stopOnce.Do(func() {
+		s.lifecycleMu.Lock()
+		s.stopped = true
+		close(s.stopCh)
+		s.lifecycleMu.Unlock()
+	})
+	s.lifecycleMu.Lock()
+	started := s.started
+	s.lifecycleMu.Unlock()
+	if !started {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-s.doneCh:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Preview 返回当前已过期记录的影响范围，绝不创建清理运行或执行删除。
@@ -129,7 +167,7 @@ func (s *CleanupService) RunManual(ctx context.Context, requestedBy int64) (Clea
 	return s.run(ctx, CleanupModeManual, &requestedBy)
 }
 
-// runLoop 在启动后和每个周期执行一次受开关约束的自动清理。
+// runLoop 在启动后和每天一次执行受开关约束的自动清理。
 func (s *CleanupService) runLoop() {
 	s.runAutomaticOnce()
 	ticker := time.NewTicker(s.interval)
@@ -183,10 +221,21 @@ func (s *CleanupService) run(ctx context.Context, mode CleanupMode, requestedBy 
 			break
 		}
 	}
-	if finishErr := s.repository.FinishCleanupRun(ctx, runID, result, runErr); finishErr != nil && runErr == nil {
+	finishCtx, cancelFinish := cleanupFinishContext(ctx)
+	defer cancelFinish()
+	if finishErr := s.repository.FinishCleanupRun(finishCtx, runID, result, runErr); finishErr != nil && runErr == nil {
 		runErr = fmt.Errorf("finish model trace cleanup run: %w", finishErr)
 	}
 	return result, runErr
+}
+
+// cleanupFinishContext detaches the final audit write from a caller's canceled
+// request while preserving values and imposing a short, explicit DB deadline.
+func cleanupFinishContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), traceCleanupFinishWait)
 }
 
 // beginRun 获得进程内的单实例清理闸门，防止定时任务与管理员操作重复删除。

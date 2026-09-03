@@ -23,7 +23,6 @@ func TestPostgresRepositoryPersistsHeadersAndPayloadMetadata(t *testing.T) {
 		RequestID: "request-repository-canary",
 		Route:     "/v1/chat/completions",
 		Protocol:  "sync",
-		Method:    "POST",
 		ExpiresAt: createdAt.AddDate(0, 0, 7),
 		CreatedAt: createdAt,
 	})
@@ -58,7 +57,7 @@ func TestPostgresRepositoryPersistsHeadersAndPayloadMetadata(t *testing.T) {
 	err = db.QueryRowContext(ctx, `
 		SELECT t.request_capture_status, t.outcome, t.status_code, t.request_bytes, t.response_bytes, p.ciphertext
 		FROM model_call_traces t
-		JOIN model_call_payloads p ON p.trace_id=t.id
+		JOIN model_call_payloads p ON p.model_call_trace_id=t.id
 		WHERE t.trace_id=$1
 	`, "trace-repository-canary").Scan(&requestStatus, &outcome, &statusCode, &requestBytes, &responseBytes, &ciphertext)
 	require.NoError(t, err)

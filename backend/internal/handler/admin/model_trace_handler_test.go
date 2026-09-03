@@ -14,10 +14,11 @@ import (
 
 // modelTraceQueryRepositoryStub 为管理端处理器提供不含数据库 I/O 的追踪查询结果。
 type modelTraceQueryRepositoryStub struct {
-	items  []modeltrace.TraceSummary
-	total  int64
-	detail modeltrace.TraceDetail
-	filter modeltrace.TraceFilter
+	items   []modeltrace.TraceSummary
+	total   int64
+	detail  modeltrace.TraceDetail
+	payload modeltrace.TracePayload
+	filter  modeltrace.TraceFilter
 }
 
 // ListTraces 记录处理器解析后的筛选条件并返回预置索引。
@@ -29,6 +30,11 @@ func (s *modelTraceQueryRepositoryStub) ListTraces(_ context.Context, filter mod
 // GetTrace 返回预置的单条调用详情。
 func (s *modelTraceQueryRepositoryStub) GetTrace(context.Context, string) (modeltrace.TraceDetail, error) {
 	return s.detail, nil
+}
+
+// GetPayload returns the test-selected payload without database I/O.
+func (s *modelTraceQueryRepositoryStub) GetPayload(context.Context, string, modeltrace.PayloadKind, int) (modeltrace.TracePayload, error) {
+	return s.payload, nil
 }
 
 // modelTraceDecryptorStub 仅返回测试期望的安全正文。
@@ -70,38 +76,45 @@ func TestModelTraceHandlerListReturnsIndexes(t *testing.T) {
 	router := gin.New()
 	router.GET("/admin/model-traces", handler.List)
 
-	request := httptest.NewRequest(http.MethodGet, "/admin/model-traces?request_id=creq-list", nil)
+	request := httptest.NewRequest(http.MethodGet, "/admin/model-traces?request_id=creq-list&trace_id=trace-list&protocol=websocket&capture_status=truncated", nil)
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "trace-list") {
 		t.Fatalf("list response status=%d body=%s", response.Code, response.Body.String())
 	}
-	if repository.filter.RequestID != "creq-list" {
+	if repository.filter.RequestID != "creq-list" || repository.filter.TraceID != "trace-list" || repository.filter.Protocol != "websocket" || repository.filter.CaptureStatus != modeltrace.CaptureStatusTruncated {
 		t.Fatalf("parsed filter=%#v", repository.filter)
 	}
 }
 
-// TestModelTraceHandlerDetailReturnsSafeDecryptedPayload 验证详情可以展示安全正文但永不回传数据库密文。
-func TestModelTraceHandlerDetailReturnsSafeDecryptedPayload(t *testing.T) {
+// TestModelTraceHandlerReadsOnlySelectedPayload verifies that detail returns
+// metadata while the selected payload endpoint alone can decrypt safe content.
+func TestModelTraceHandlerReadsOnlySelectedPayload(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repository := &modelTraceQueryRepositoryStub{detail: modeltrace.TraceDetail{
 		Trace: modeltrace.TraceSummary{TraceID: "trace-detail"},
 		Payloads: []modeltrace.TracePayload{{
 			Kind:          modeltrace.PayloadKindClientRequest,
 			CaptureStatus: modeltrace.CaptureStatusRedacted,
-			Ciphertext:    "ciphertext-canary",
 		}},
-	}}
+	}, payload: modeltrace.TracePayload{Kind: modeltrace.PayloadKindClientRequest, CaptureStatus: modeltrace.CaptureStatusRedacted, Ciphertext: "ciphertext-canary"}}
 	handler := newModelTraceHandlerForTest(repository)
 	router := gin.New()
 	router.GET("/admin/model-traces/:traceID", handler.Detail)
+	router.GET("/admin/model-traces/:traceID/payloads/:kind", handler.Payload)
 
 	request := httptest.NewRequest(http.MethodGet, "/admin/model-traces/trace-detail", nil)
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "[REDACTED]") || strings.Contains(response.Body.String(), "ciphertext-canary") {
+	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "[REDACTED]") || strings.Contains(response.Body.String(), "ciphertext-canary") {
 		t.Fatalf("detail response status=%d body=%s", response.Code, response.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodGet, "/admin/model-traces/trace-detail/payloads/client_request", nil)
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "[REDACTED]") || strings.Contains(response.Body.String(), "ciphertext-canary") {
+		t.Fatalf("payload response status=%d body=%s", response.Code, response.Body.String())
 	}
 }

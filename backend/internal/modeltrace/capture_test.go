@@ -51,6 +51,44 @@ func TestCaptureForStorageMarksOversizedPayload(t *testing.T) {
 	}
 }
 
+// TestSanitizeForStorageRedactsStreamingJSON verifies that JSON carried by
+// SSE data lines and newline-delimited JSON never bypasses the same redaction
+// boundary used for ordinary request and response bodies.
+func TestSanitizeForStorageRedactsStreamingJSON(t *testing.T) {
+	tests := []struct {
+		name        string
+		contentType string
+		raw         string
+	}{
+		{
+			name:        "server sent events",
+			contentType: "text/event-stream",
+			raw:         "event: response\ndata: {\"token\":\"sse-canary\",\"message\":\"safe\"}\n\n",
+		},
+		{
+			name:        "newline delimited json",
+			contentType: "application/x-ndjson",
+			raw:         "{\"api_key\":\"ndjson-canary\"}\n{\"message\":\"safe\"}\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := SanitizeForStorage(tt.contentType, []byte(tt.raw))
+
+			if strings.Contains(string(got.Body), "canary") {
+				t.Fatalf("sanitized stream leaked credential: %s", got.Body)
+			}
+			if !strings.Contains(string(got.Body), "[REDACTED]") {
+				t.Fatalf("sanitized stream = %s, want redaction marker", got.Body)
+			}
+			if got.Status != CaptureStatusRedacted {
+				t.Fatalf("capture status = %q, want %q", got.Status, CaptureStatusRedacted)
+			}
+		})
+	}
+}
+
 // TestIsTraceableGatewayRouteLimitsCaptureToModelCalls verifies that adjacent
 // gateway management endpoints cannot begin storing arbitrary admin-style data.
 func TestIsTraceableGatewayRouteLimitsCaptureToModelCalls(t *testing.T) {

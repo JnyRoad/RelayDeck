@@ -714,6 +714,7 @@ func registerModelTraceRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepU
 		traces.PUT("/config", gin.HandlerFunc(stepUpAuth), h.Admin.ModelTrace.UpdateConfig)
 		traces.GET("/cleanup-preview", h.Admin.ModelTrace.PreviewCleanup)
 		traces.POST("/cleanup", gin.HandlerFunc(stepUpAuth), h.Admin.ModelTrace.RunCleanup)
+		traces.GET("/:traceID/payloads/:kind", gin.HandlerFunc(stepUpAuth), h.Admin.ModelTrace.Payload)
 		traces.GET("/:traceID", gin.HandlerFunc(stepUpAuth), h.Admin.ModelTrace.Detail)
 	}
 }

@@ -495,7 +495,7 @@ func provideCleanup(
 			}},
 			{"ModelTraceCleanupService", func() error {
 				if modelTraceCleanup != nil {
-					modelTraceCleanup.Stop()
+					return modelTraceCleanup.Stop(ctx)
 				}
 				return nil
 			}},

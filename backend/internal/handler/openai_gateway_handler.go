@@ -3034,6 +3034,10 @@ func (h *OpenAIGatewayHandler) newModelWebSocketTurnTracer(c *gin.Context) *mode
 // openAIWebSocketTraceOutcome maps a terminal turn result to a stable
 // diagnostic outcome without changing the existing WebSocket close semantics.
 func openAIWebSocketTraceOutcome(ctx context.Context, result *service.OpenAIForwardResult, turnErr error) modeltrace.Outcome {
+	var policyBlocked *service.OpenAIFastBlockedError
+	if errors.As(turnErr, &policyBlocked) {
+		return modeltrace.OutcomeBlocked
+	}
 	if result != nil && result.ClientDisconnect {
 		return modeltrace.OutcomePartial
 	}

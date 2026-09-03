@@ -48,7 +48,7 @@ func (h *ModelTraceHandler) List(c *gin.Context) {
 	response.Paginated(c, items, total, page, pageSize)
 }
 
-// Detail 返回一条调用及其已脱敏正文；路由层会在启用时加 Step-up 门控。
+// Detail 返回一条调用头和正文元数据；实际正文必须通过单个正文接口读取。
 func (h *ModelTraceHandler) Detail(c *gin.Context) {
 	if h == nil || h.queryService == nil {
 		response.InternalError(c, "Model trace query is unavailable")
@@ -60,6 +60,29 @@ func (h *ModelTraceHandler) Detail(c *gin.Context) {
 		return
 	}
 	response.Success(c, detail)
+}
+
+// Payload 返回管理员明确选中的一种已脱敏正文，避免详情页一次读取全部密文。
+func (h *ModelTraceHandler) Payload(c *gin.Context) {
+	if h == nil || h.queryService == nil {
+		response.InternalError(c, "Model trace query is unavailable")
+		return
+	}
+	attemptNo := 0
+	if raw := strings.TrimSpace(c.Query("attempt_no")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			response.BadRequest(c, "Invalid attempt_no")
+			return
+		}
+		attemptNo = parsed
+	}
+	payload, err := h.queryService.Payload(c.Request.Context(), c.Param("traceID"), modeltrace.PayloadKind(c.Param("kind")), attemptNo)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, payload)
 }
 
 // GetConfig 返回当前有效追踪与保留期设置，不包含任何密钥或正文。
@@ -130,10 +153,13 @@ func (h *ModelTraceHandler) RunCleanup(c *gin.Context) {
 // parseModelTraceFilter 将允许的 URL 参数转换为强类型索引筛选，拒绝模糊日期或非法关联键。
 func parseModelTraceFilter(c *gin.Context) (modeltrace.TraceFilter, bool) {
 	filter := modeltrace.TraceFilter{
+		TraceID:        strings.TrimSpace(c.Query("trace_id")),
 		RequestID:      strings.TrimSpace(c.Query("request_id")),
 		Route:          strings.TrimSpace(c.Query("route")),
 		RequestedModel: strings.TrimSpace(c.Query("requested_model")),
+		Protocol:       strings.TrimSpace(c.Query("protocol")),
 		Outcome:        modeltrace.Outcome(strings.TrimSpace(c.Query("outcome"))),
+		CaptureStatus:  modeltrace.CaptureStatus(strings.TrimSpace(c.Query("capture_status"))),
 	}
 	for _, target := range []struct {
 		query string

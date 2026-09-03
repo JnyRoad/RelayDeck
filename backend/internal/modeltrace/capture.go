@@ -39,7 +39,8 @@ type CapturedPayload struct {
 }
 
 // SanitizeForStorage removes credential and inline media values before a body
-// reaches persistent storage. Non-JSON bodies stay byte-for-byte unchanged.
+// reaches persistent storage. JSON streams retain their framing while each
+// independently valid JSON record receives the same redaction treatment.
 func SanitizeForStorage(contentType string, raw []byte) CapturedPayload {
 	result := CapturedPayload{
 		Body:          append([]byte(nil), raw...),
@@ -49,26 +50,96 @@ func SanitizeForStorage(contentType string, raw []byte) CapturedPayload {
 		SHA256:        hashPayload(raw),
 	}
 
-	if !isJSONContentType(contentType) || len(raw) == 0 {
+	if len(raw) == 0 {
 		return result
 	}
 
-	var decoded any
-	if err := json.Unmarshal(raw, &decoded); err != nil {
+	var sanitized []byte
+	var redacted bool
+	switch {
+	case isJSONContentType(contentType):
+		sanitized, redacted = sanitizeJSONDocument(raw)
+	case isNDJSONContentType(contentType):
+		sanitized, redacted = sanitizeJSONLines(raw, false)
+	case isSSEContentType(contentType):
+		sanitized, redacted = sanitizeJSONLines(raw, true)
+	default:
 		return result
 	}
-	if !redactJSONValue(&decoded, "") {
+	if !redacted {
 		return result
 	}
 
-	sanitized, err := json.Marshal(decoded)
-	if err != nil {
-		return result
-	}
 	result.Body = sanitized
 	result.StoredBytes = int64(len(sanitized))
 	result.Status = CaptureStatusRedacted
 	return result
+}
+
+// sanitizeJSONDocument redacts one complete JSON value without allowing an
+// invalid document to become a new persistence representation.
+func sanitizeJSONDocument(raw []byte) ([]byte, bool) {
+	var decoded any
+	if err := json.Unmarshal(raw, &decoded); err != nil || !redactJSONValue(&decoded, "") {
+		return append([]byte(nil), raw...), false
+	}
+	sanitized, err := json.Marshal(decoded)
+	if err != nil {
+		return append([]byte(nil), raw...), false
+	}
+	return sanitized, true
+}
+
+// sanitizeJSONLines redacts complete JSON records while preserving NDJSON or
+// SSE framing, line ordering, and non-JSON protocol control lines.
+func sanitizeJSONLines(raw []byte, sse bool) ([]byte, bool) {
+	lines := strings.SplitAfter(string(raw), "\n")
+	changed := false
+	for index, line := range lines {
+		prefix, jsonText, suffix, ok := traceJSONLineParts(line, sse)
+		if !ok {
+			continue
+		}
+		sanitized, redacted := sanitizeJSONDocument([]byte(jsonText))
+		if !redacted {
+			continue
+		}
+		lines[index] = prefix + string(sanitized) + suffix
+		changed = true
+	}
+	if !changed {
+		return append([]byte(nil), raw...), false
+	}
+	return []byte(strings.Join(lines, "")), true
+}
+
+// traceJSONLineParts separates a line's JSON candidate from preserved protocol
+// syntax. SSE only allows JSON after a data: field; NDJSON treats the body as
+// the candidate and retains its original line ending.
+func traceJSONLineParts(line string, sse bool) (prefix, jsonText, suffix string, ok bool) {
+	suffix = ""
+	if strings.HasSuffix(line, "\n") {
+		line = strings.TrimSuffix(line, "\n")
+		suffix = "\n"
+	}
+	if sse {
+		leading := len(line) - len(strings.TrimLeft(line, " \t"))
+		field := line[leading:]
+		if !strings.HasPrefix(field, "data:") {
+			return "", "", suffix, false
+		}
+		prefix = line[:leading+len("data:")]
+		jsonText = strings.TrimSpace(field[len("data:"):])
+		if jsonText == "" {
+			return "", "", suffix, false
+		}
+		return prefix, jsonText, suffix, true
+	}
+	jsonText = strings.TrimSpace(line)
+	if jsonText == "" {
+		return "", "", suffix, false
+	}
+	return "", jsonText, suffix, true
 }
 
 // CaptureForStorage sanitizes a payload, records the original hash, and bounds
@@ -178,6 +249,24 @@ func isJSONContentType(contentType string) bool {
 	}
 	mediaType = strings.ToLower(mediaType)
 	return mediaType == "application/json" || strings.HasSuffix(mediaType, "+json")
+}
+
+// isNDJSONContentType identifies line-delimited JSON protocol bodies whose
+// individual records can be safely redacted without discarding stream framing.
+func isNDJSONContentType(contentType string) bool {
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return false
+	}
+	mediaType = strings.ToLower(mediaType)
+	return mediaType == "application/x-ndjson" || mediaType == "application/ndjson" || mediaType == "application/jsonl"
+}
+
+// isSSEContentType identifies textual event streams that may embed structured
+// model frames in data fields rather than in one top-level JSON document.
+func isSSEContentType(contentType string) bool {
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	return err == nil && strings.EqualFold(mediaType, "text/event-stream")
 }
 
 // hashPayload returns the lowercase SHA-256 digest used to correlate a body

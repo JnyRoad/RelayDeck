@@ -64,12 +64,12 @@
 {
   "enabled": false,
   "payload_capture_enabled": false,
-  "auto_cleanup_enabled": true,
+  "auto_cleanup_enabled": false,
   "retention_days": 7
 }
 ```
 
-验证规则：只有 `retention_days` 在 1–90 时可保存；开启正文采集时必须存在固定加密密钥。配置更新不删除历史数据。
+验证规则：只有 `retention_days` 在 1–90 时可保存；自动清理默认关闭，管理员显式开启后每日执行；开启正文采集时必须存在固定加密密钥。配置更新不删除历史数据。
 
 ## State Transitions
 
