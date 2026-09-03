@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,17 +18,18 @@ import (
 // verification details supplied by the app-server service.
 func TestOpenAIOAuthHandler_StartAppServerDeviceCodeLogin(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	handler := &OpenAIOAuthHandler{
-		appServerLoginService: &stubCodexAppServerLoginService{
-			login: &service.CodexAppServerLogin{
-				SessionID:       "app-server-session",
-				LoginID:         "official-login",
-				Mode:            service.CodexAppServerLoginModeDeviceCode,
-				Status:          service.CodexAppServerLoginStatusPending,
-				VerificationURL: "https://auth.openai.com/codex/device",
-				UserCode:        "ABCD-1234",
-			},
+	loginService := &stubCodexAppServerLoginService{
+		login: &service.CodexAppServerLogin{
+			SessionID:       "app-server-session",
+			LoginID:         "official-login",
+			Mode:            service.CodexAppServerLoginModeDeviceCode,
+			Status:          service.CodexAppServerLoginStatusPending,
+			VerificationURL: "https://auth.openai.com/codex/device",
+			UserCode:        "ABCD-1234",
 		},
+	}
+	handler := &OpenAIOAuthHandler{
+		appServerLoginService: loginService,
 	}
 	router := gin.New()
 	router.POST("/admin/openai/app-server/login/start", handler.StartAppServerLogin)
@@ -44,6 +46,34 @@ func TestOpenAIOAuthHandler_StartAppServerDeviceCodeLogin(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Contains(t, recorder.Body.String(), `"verification_url":"https://auth.openai.com/codex/device"`)
 	require.Contains(t, recorder.Body.String(), `"user_code":"ABCD-1234"`)
+	require.Equal(t, service.CodexAppServerLoginModeDeviceCode, loginService.mode)
+}
+
+func TestOpenAIOAuthHandler_CreateAppServerAccountReleasesLoginWhenPersistenceFails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	adminService := newStubAdminService()
+	adminService.createAccountErr = errors.New("repository unavailable")
+	loginService := &stubCodexAppServerLoginService{
+		login: &service.CodexAppServerLogin{
+			SessionID: "app-server-session",
+			Status:    service.CodexAppServerLoginStatusCompleted,
+		},
+	}
+	handler := &OpenAIOAuthHandler{adminService: adminService, appServerLoginService: loginService}
+	router := gin.New()
+	router.POST("/admin/openai/app-server/login/:session_id/create-account", handler.CreateAppServerAccount)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/admin/openai/app-server/login/app-server-session/create-account",
+		strings.NewReader(`{"name":"个人官方运行时","priority":1}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+
+	require.NotEqual(t, http.StatusOK, recorder.Code)
+	require.Equal(t, "app-server-session", loginService.cancelledSessionID)
 }
 
 // This catches any regression that stores a provider token in RelayDeck when
@@ -111,10 +141,13 @@ func TestAccountHandler_RejectsSchedulingManagedAppServerProfile(t *testing.T) {
 }
 
 type stubCodexAppServerLoginService struct {
-	login *service.CodexAppServerLogin
+	login              *service.CodexAppServerLogin
+	mode               service.CodexAppServerLoginMode
+	cancelledSessionID string
 }
 
-func (s *stubCodexAppServerLoginService) StartLogin(_ context.Context, _ service.CodexAppServerLoginMode) (*service.CodexAppServerLogin, error) {
+func (s *stubCodexAppServerLoginService) StartLogin(_ context.Context, mode service.CodexAppServerLoginMode) (*service.CodexAppServerLogin, error) {
+	s.mode = mode
 	return s.login, nil
 }
 
@@ -128,4 +161,7 @@ func (s *stubCodexAppServerLoginService) CompleteLogin(_ string) (string, error)
 
 func (s *stubCodexAppServerLoginService) FinalizeLogin(_ string) error { return nil }
 
-func (s *stubCodexAppServerLoginService) CancelLogin(_ context.Context, _ string) error { return nil }
+func (s *stubCodexAppServerLoginService) CancelLogin(_ context.Context, sessionID string) error {
+	s.cancelledSessionID = sessionID
+	return nil
+}

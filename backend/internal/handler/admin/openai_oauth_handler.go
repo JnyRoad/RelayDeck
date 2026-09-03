@@ -226,6 +226,11 @@ func (h *OpenAIOAuthHandler) CreateAppServerAccount(c *gin.Context) {
 		SkipMixedChannelCheck: true,
 	})
 	if err != nil {
+		// No account references this completed profile, so it must be released
+		// before returning a persistence error to the browser.
+		if cancelErr := h.appServerLoginService.CancelLogin(c.Request.Context(), c.Param("session_id")); cancelErr != nil {
+			slog.Warn("release_codex_app_server_login_failed", "profile_id", profileID, "error", cancelErr)
+		}
 		response.ErrorFrom(c, err)
 		return
 	}

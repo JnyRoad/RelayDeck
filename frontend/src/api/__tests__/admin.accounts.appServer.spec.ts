@@ -44,7 +44,7 @@ describe('admin official app-server login API', () => {
     })
     await expect(cancelCodexAppServerLogin('profile-1')).resolves.toEqual({ status: 'cancelled' })
 
-    expect(post).toHaveBeenNthCalledWith(1, '/admin/openai/app-server/login/start', { mode: 'device_code' })
+    expect(post).toHaveBeenNthCalledWith(1, '/admin/openai/app-server/login/start', { mode: 'device_code' }, { timeout: 90_000 })
     expect(get).toHaveBeenCalledWith('/admin/openai/app-server/login/profile-1')
     expect(post).toHaveBeenNthCalledWith(2, '/admin/openai/app-server/login/profile-1/create-account', {
       name: '个人官方运行时',

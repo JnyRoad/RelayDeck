@@ -18,6 +18,9 @@ import (
 )
 
 const (
+	codexAppServerLoginStartTimeout = 15 * time.Second
+	codexAppServerLoginSessionTTL   = 15 * time.Minute
+
 	// CodexAppServerLoginModeBrowser asks the official Codex app-server to own
 	// the browser/loopback flow. It is useful only when the browser runs on the
 	// same host as the app-server process.
@@ -66,6 +69,7 @@ type CodexAppServerTransport interface {
 	Request(ctx context.Context, method string, params any) (json.RawMessage, error)
 	Notify(ctx context.Context, method string, params any) error
 	Notifications() <-chan CodexAppServerNotification
+	Done() <-chan struct{}
 	Close() error
 }
 
@@ -93,10 +97,15 @@ type CodexAppServerService struct {
 }
 
 type codexAppServerSession struct {
-	mu        sync.RWMutex
-	login     CodexAppServerLogin
-	homeDir   string
-	transport CodexAppServerTransport
+	mu                sync.RWMutex
+	login             CodexAppServerLogin
+	homeDir           string
+	transport         CodexAppServerTransport
+	expiresAt         time.Time
+	expiryTimer       *time.Timer
+	resourcesReleased bool
+	profileRemoved    bool
+	profileClaimed    bool
 }
 
 // NewCodexAppServerService builds a service suitable for production and tests.
@@ -154,7 +163,9 @@ func (s *CodexAppServerService) StartLogin(ctx context.Context, mode CodexAppSer
 	if mode == CodexAppServerLoginModeDeviceCode {
 		loginType = "chatgptDeviceCode"
 	}
-	raw, err := transport.Request(ctx, "account/login/start", map[string]string{"type": loginType})
+	startCtx, cancelStart := context.WithTimeout(ctx, codexAppServerLoginStartTimeout)
+	defer cancelStart()
+	raw, err := transport.Request(startCtx, "account/login/start", map[string]string{"type": loginType})
 	if err != nil {
 		_ = transport.Close()
 		_ = os.RemoveAll(homeDir)
@@ -185,7 +196,7 @@ func (s *CodexAppServerService) StartLogin(ctx context.Context, mode CodexAppSer
 	if mode == CodexAppServerLoginModeDeviceCode && (strings.TrimSpace(response.VerificationURL) == "" || strings.TrimSpace(response.UserCode) == "") {
 		_ = transport.Close()
 		_ = os.RemoveAll(homeDir)
-		return nil, errors.New("Codex app-server 未返回设备授权信息")
+		return nil, errors.New("codex app-server 未返回设备授权信息")
 	}
 
 	session := &codexAppServerSession{
@@ -200,10 +211,12 @@ func (s *CodexAppServerService) StartLogin(ctx context.Context, mode CodexAppSer
 		},
 		homeDir:   homeDir,
 		transport: transport,
+		expiresAt: time.Now().Add(codexAppServerLoginSessionTTL),
 	}
 	s.mu.Lock()
 	s.sessions[sessionID] = session
 	s.mu.Unlock()
+	s.scheduleExpiry(session)
 	go s.watchLogin(session)
 
 	login := session.snapshot()
@@ -230,7 +243,7 @@ func (s *CodexAppServerService) CompleteLogin(sessionID string) (string, error) 
 	}
 	login := session.snapshot()
 	if login.Status != CodexAppServerLoginStatusCompleted {
-		return "", fmt.Errorf("Codex app-server 登录尚未完成: %s", login.Status)
+		return "", fmt.Errorf("codex app-server 登录尚未完成: %s", login.Status)
 	}
 	return login.SessionID, nil
 }
@@ -246,33 +259,35 @@ func (s *CodexAppServerService) FinalizeLogin(sessionID string) error {
 	if session.snapshot().Status != CodexAppServerLoginStatusCompleted {
 		return errors.New("不能完成尚未认证的 Codex app-server 登录")
 	}
+	// The account was persisted immediately before finalization, so expiry must
+	// retain this profile even if the transient transport close fails.
+	session.claimProfile()
 	if err := session.transport.Close(); err != nil {
 		return err
 	}
-	s.mu.Lock()
-	delete(s.sessions, sessionID)
-	s.mu.Unlock()
+	s.removeSession(session)
 	return nil
 }
 
-// CancelLogin cancels a pending official login and removes its incomplete
-// isolated profile. Completed profiles must be finalized instead.
+// CancelLogin releases an unclaimed official login and removes its isolated
+// profile. Completed sessions remain discardable until FinalizeLogin claims the
+// profile for a persisted account.
 func (s *CodexAppServerService) CancelLogin(ctx context.Context, sessionID string) error {
 	session, err := s.session(sessionID)
 	if err != nil {
 		return err
 	}
-	login := session.snapshot()
-	if login.Status == CodexAppServerLoginStatusCompleted {
-		return errors.New("已完成的 Codex app-server 登录不能取消")
+	if !s.removeSession(session) {
+		return errors.New("codex app-server 登录会话不存在或已结束")
 	}
-	_, requestErr := session.transport.Request(ctx, "account/login/cancel", map[string]string{"loginId": login.LoginID})
-	closeErr := session.transport.Close()
+	login := session.snapshot()
+	requestErr, closeErr, removeErr := s.releaseIncompleteProfile(
+		ctx,
+		session,
+		login.LoginID,
+		login.Status != CodexAppServerLoginStatusCompleted,
+	)
 	session.setStatus(CodexAppServerLoginStatusCancelled, "")
-	s.mu.Lock()
-	delete(s.sessions, sessionID)
-	s.mu.Unlock()
-	removeErr := os.RemoveAll(session.homeDir)
 	return errors.Join(requestErr, closeErr, removeErr)
 }
 
@@ -281,13 +296,31 @@ func (s *CodexAppServerService) session(sessionID string) (*codexAppServerSessio
 	session := s.sessions[sessionID]
 	s.mu.RUnlock()
 	if session == nil {
-		return nil, errors.New("Codex app-server 登录会话不存在或已结束")
+		return nil, errors.New("codex app-server 登录会话不存在或已结束")
 	}
 	return session, nil
 }
 
 func (s *CodexAppServerService) watchLogin(session *codexAppServerSession) {
-	for notification := range session.transport.Notifications() {
+	notifications := session.transport.Notifications()
+	for {
+		var notification CodexAppServerNotification
+		select {
+		case notification = <-notifications:
+		case <-session.transport.Done():
+			// readLoop can queue the final completion notification immediately
+			// before it closes Done. Drain that queued value before treating the
+			// transport exit as a failed authorization.
+			select {
+			case notification = <-notifications:
+			default:
+				if session.snapshot().Status == CodexAppServerLoginStatusPending {
+					session.setStatus(CodexAppServerLoginStatusFailed, "Codex app-server 连接已关闭")
+					_, _, _ = s.releaseIncompleteProfile(context.Background(), session, "", false)
+				}
+				return
+			}
+		}
 		if notification.Method != "account/login/completed" {
 			continue
 		}
@@ -306,12 +339,71 @@ func (s *CodexAppServerService) watchLogin(session *codexAppServerSession) {
 			session.setStatus(CodexAppServerLoginStatusCompleted, "")
 		} else {
 			session.setStatus(CodexAppServerLoginStatusFailed, completed.Error)
+			_, _, _ = s.releaseIncompleteProfile(context.Background(), session, "", false)
 		}
 		return
 	}
-	if session.snapshot().Status == CodexAppServerLoginStatusPending {
-		session.setStatus(CodexAppServerLoginStatusFailed, "Codex app-server 连接已关闭")
+}
+
+// scheduleExpiry bounds the lifetime of every unclaimed login. The timer is
+// stopped as soon as the session is finalized or explicitly cancelled.
+func (s *CodexAppServerService) scheduleExpiry(session *codexAppServerSession) {
+	delay := time.Until(session.expiresAt)
+	if delay < 0 {
+		delay = 0
 	}
+	session.mu.Lock()
+	session.expiryTimer = time.AfterFunc(delay, func() {
+		s.discard(session)
+	})
+	session.mu.Unlock()
+}
+
+// discard unregisters an expired session and releases its runtime. A profile
+// already claimed by an account is retained while its transport is reclaimed.
+func (s *CodexAppServerService) discard(session *codexAppServerSession) {
+	if !s.removeSession(session) {
+		return
+	}
+	_, _, _ = s.releaseIncompleteProfile(context.Background(), session, "", false)
+}
+
+// removeSession removes exactly this session and prevents expiry from acting
+// after a successful finalization.
+func (s *CodexAppServerService) removeSession(session *codexAppServerSession) bool {
+	sessionID := session.snapshot().SessionID
+	s.mu.Lock()
+	if s.sessions[sessionID] != session {
+		s.mu.Unlock()
+		return false
+	}
+	delete(s.sessions, sessionID)
+	s.mu.Unlock()
+
+	session.mu.Lock()
+	if session.expiryTimer != nil {
+		session.expiryTimer.Stop()
+	}
+	session.mu.Unlock()
+	return true
+}
+
+// releaseIncompleteProfile closes a transient transport only once and removes
+// an unclaimed profile directory without touching claimed account profiles.
+func (s *CodexAppServerService) releaseIncompleteProfile(ctx context.Context, session *codexAppServerSession, loginID string, cancelRemote bool) (error, error, error) {
+	if !session.markResourcesReleased() {
+		return nil, nil, nil
+	}
+	var requestErr error
+	if cancelRemote && strings.TrimSpace(loginID) != "" {
+		_, requestErr = session.transport.Request(ctx, "account/login/cancel", map[string]string{"loginId": loginID})
+	}
+	closeErr := session.transport.Close()
+	var removeErr error
+	if !session.isProfileClaimed() && session.markProfileRemoved() {
+		removeErr = os.RemoveAll(session.homeDir)
+	}
+	return requestErr, closeErr, removeErr
 }
 
 func (s *codexAppServerSession) snapshot() CodexAppServerLogin {
@@ -325,6 +417,44 @@ func (s *codexAppServerSession) setStatus(status CodexAppServerLoginStatus, errM
 	defer s.mu.Unlock()
 	s.login.Status = status
 	s.login.Error = errMessage
+}
+
+// markResourcesReleased prevents concurrent failure, cancellation, and expiry
+// paths from closing the same runtime twice.
+func (s *codexAppServerSession) markResourcesReleased() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.resourcesReleased {
+		return false
+	}
+	s.resourcesReleased = true
+	return true
+}
+
+// claimProfile records that an account owns this profile before finalization.
+func (s *codexAppServerSession) claimProfile() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.profileClaimed = true
+}
+
+// isProfileClaimed reports whether cleanup must retain the profile directory.
+func (s *codexAppServerSession) isProfileClaimed() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.profileClaimed
+}
+
+// markProfileRemoved prevents concurrent cleanup paths from deleting the same
+// profile directory twice.
+func (s *codexAppServerSession) markProfileRemoved() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.profileRemoved {
+		return false
+	}
+	s.profileRemoved = true
+	return true
 }
 
 func randomSessionID() (string, error) {
@@ -422,10 +552,10 @@ func startStdioCodexAppServer(binary, homeDir string) (*stdioCodexAppServerTrans
 		notifications: make(chan CodexAppServerNotification, 32),
 		done:          make(chan struct{}),
 	}
-	go transport.readLoop(stdout)
 	go func() {
+		transport.readLoop(stdout)
 		_ = command.Wait()
-		transport.closeNotifications()
+		transport.closeDone()
 	}()
 	return transport, nil
 }
@@ -459,7 +589,7 @@ func (c *stdioCodexAppServerTransport) Request(ctx context.Context, method strin
 	select {
 	case message := <-response:
 		if message.Error != nil {
-			return nil, fmt.Errorf("Codex app-server %s 失败 (%d): %s", method, message.Error.Code, message.Error.Message)
+			return nil, fmt.Errorf("codex app-server %s 失败 (%d): %s", method, message.Error.Code, message.Error.Message)
 		}
 		return message.Result, nil
 	case <-ctx.Done():
@@ -467,7 +597,7 @@ func (c *stdioCodexAppServerTransport) Request(ctx context.Context, method strin
 		return nil, ctx.Err()
 	case <-c.done:
 		c.unregisterRequest(id)
-		return nil, errors.New("Codex app-server 连接已关闭")
+		return nil, errors.New("codex app-server 连接已关闭")
 	}
 }
 
@@ -482,6 +612,11 @@ func (c *stdioCodexAppServerTransport) Notifications() <-chan CodexAppServerNoti
 	return c.notifications
 }
 
+// Done closes when the transport can no longer accept or emit protocol data.
+func (c *stdioCodexAppServerTransport) Done() <-chan struct{} {
+	return c.done
+}
+
 func (c *stdioCodexAppServerTransport) Close() error {
 	c.shutdownOnce.Do(func() {
 		c.mu.Lock()
@@ -491,7 +626,7 @@ func (c *stdioCodexAppServerTransport) Close() error {
 		if c.cmd.Process != nil {
 			_ = c.cmd.Process.Kill()
 		}
-		c.closeNotifications()
+		c.closeDone()
 	})
 	return nil
 }
@@ -500,7 +635,7 @@ func (c *stdioCodexAppServerTransport) registerRequest() (int64, chan codexAppSe
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
-		return 0, nil, errors.New("Codex app-server 连接已关闭")
+		return 0, nil, errors.New("codex app-server 连接已关闭")
 	}
 	c.nextID++
 	id := c.nextID
@@ -523,7 +658,7 @@ func (c *stdioCodexAppServerTransport) write(message codexAppServerRPCMessage) e
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
-		return errors.New("Codex app-server 连接已关闭")
+		return errors.New("codex app-server 连接已关闭")
 	}
 	_, err = c.stdin.Write(append(payload, '\n'))
 	return err
@@ -555,16 +690,16 @@ func (c *stdioCodexAppServerTransport) readLoop(reader io.Reader) {
 			}
 		}
 	}
-	c.closeNotifications()
 }
 
-func (c *stdioCodexAppServerTransport) closeNotifications() {
+// closeDone broadcasts transport shutdown without closing notifications, whose
+// producer may still be draining stdout concurrently.
+func (c *stdioCodexAppServerTransport) closeDone() {
 	c.notifyOnce.Do(func() {
 		c.mu.Lock()
 		c.closed = true
 		c.mu.Unlock()
 		close(c.done)
-		close(c.notifications)
 	})
 }
 

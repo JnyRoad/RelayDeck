@@ -476,7 +476,11 @@ export interface CodexAppServerLogin {
 export async function startCodexAppServerLogin(
   mode: CodexAppServerLoginMode = 'device_code'
 ): Promise<CodexAppServerLogin> {
-  const { data } = await apiClient.post<CodexAppServerLogin>('/admin/openai/app-server/login/start', { mode })
+  const { data } = await apiClient.post<CodexAppServerLogin>(
+    '/admin/openai/app-server/login/start',
+    { mode },
+    { timeout: 90_000 }
+  )
   return data
 }
 

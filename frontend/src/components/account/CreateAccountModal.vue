@@ -4156,7 +4156,7 @@ const abandonAppServerLogin = () => {
   stopAppServerLoginPolling()
   appServerLogin.value = null
   appServerLoginError.value = ''
-  if (activeLogin?.status === 'pending') {
+  if (activeLogin && activeLogin.status !== 'completed') {
     void adminAPI.accounts.cancelCodexAppServerLogin(activeLogin.session_id).catch(() => undefined)
   }
 }

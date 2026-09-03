@@ -943,7 +943,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 
 	// 预取所有目标账号，供凭据守卫/代理守卫/混合渠道检查共用，避免多次 DB 查询。
 	var cachedTargets []*Account
-	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || openAISettings.any() || input.ProbeEnabled != nil || input.RateMultiplier != nil {
+	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || openAISettings.any() || input.ProbeEnabled != nil || input.RateMultiplier != nil || (input.Schedulable != nil && *input.Schedulable) {
 		loaded, err := s.accountRepo.GetByIDs(ctx, input.AccountIDs)
 		if err != nil {
 			return nil, err
@@ -971,6 +971,13 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 			}
 			if !isUpstreamBillingProbeAccount(account) {
 				return nil, ErrUpstreamBillingProbeAccountInvalid
+			}
+		}
+	}
+	if input.Schedulable != nil && *input.Schedulable {
+		for _, account := range cachedTargets {
+			if account != nil && account.IsCodexAppServerManaged() {
+				return nil, infraerrors.New(http.StatusBadRequest, "CODEX_APP_SERVER_SCHEDULING_FORBIDDEN", "官方 app-server 管理资料不能加入旧 API 调度链路")
 			}
 		}
 	}

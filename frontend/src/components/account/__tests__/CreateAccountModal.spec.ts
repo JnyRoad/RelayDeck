@@ -491,6 +491,30 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(createAccountMock).not.toHaveBeenCalled()
   })
 
+  it('cancels a failed app-server login when the modal closes', async () => {
+    startCodexAppServerLoginMock.mockResolvedValue({
+      session_id: 'profile-failed',
+      login_id: 'official-login-failed',
+      mode: 'device_code',
+      status: 'failed',
+      error: 'authorization denied',
+    })
+
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await wrapper.get('[data-testid="openai-auth-scheme-app-server"]').trigger('click')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('official runtime')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+    await wrapper.get('[data-testid="app-server-login-start"]').trigger('click')
+    await flushPromises()
+
+    wrapper.unmount()
+    await flushPromises()
+
+    expect(cancelCodexAppServerLoginMock).toHaveBeenCalledWith('profile-failed')
+  })
+
   it.each([
     ['camelCase', { authMode: 'agentIdentity', agentIdentity: { agentRuntimeId: 'runtime' } }],
     ['nested identity without auth_mode', { agent_identity: { agent_runtime_id: 'runtime' } }],
