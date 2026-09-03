@@ -83,6 +83,10 @@ type CodexAppServerLauncher interface {
 	Start(ctx context.Context, homeDir string) (CodexAppServerTransport, error)
 }
 
+type codexAppServerLauncherTransportKindProvider interface {
+	codexAppServerTransportKind() string
+}
+
 // CodexAppServerServiceConfig contains only host-operator configuration. The
 // process command is never supplied by an HTTP request.
 type CodexAppServerServiceConfig struct {
@@ -127,17 +131,21 @@ func NewCodexAppServerService(cfg CodexAppServerServiceConfig) *CodexAppServerSe
 	}
 	launcher := cfg.Launcher
 	transportKind := CodexAppServerTransportStdio
-	if launcher == nil {
+	if launcher != nil {
+		if provider, ok := launcher.(codexAppServerLauncherTransportKindProvider); ok {
+			transportKind = provider.codexAppServerTransportKind()
+		}
+	} else {
 		remoteURL := strings.TrimSpace(os.Getenv("CODEX_APP_SERVER_REMOTE_URL"))
 		remoteTokenFile := strings.TrimSpace(os.Getenv("CODEX_APP_SERVER_REMOTE_TOKEN_FILE"))
 		switch {
-		case remoteURL != "" && remoteTokenFile != "":
+		case remoteURL == "":
+			launcher = NewExecCodexAppServerLauncher(strings.TrimSpace(os.Getenv("CODEX_APP_SERVER_BIN")))
+		case remoteTokenFile != "":
 			launcher = NewRemoteCodexAppServerLauncher(remoteURL, remoteTokenFile)
 			transportKind = CodexAppServerTransportWebSocket
-		case remoteURL != "" || remoteTokenFile != "":
-			launcher = unavailableCodexAppServerLauncher{err: errors.New("本机 Codex app-server bridge 配置不完整")}
 		default:
-			launcher = NewExecCodexAppServerLauncher(strings.TrimSpace(os.Getenv("CODEX_APP_SERVER_BIN")))
+			launcher = unavailableCodexAppServerLauncher{err: errors.New("本机 Codex app-server bridge 配置不完整")}
 		}
 	}
 	return &CodexAppServerService{

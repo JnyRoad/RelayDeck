@@ -25,11 +25,17 @@ type RemoteCodexAppServerLauncher struct {
 	tokenFile string
 }
 
+// NewRemoteCodexAppServerLauncher constructs a launcher for the authenticated
+// host-managed app-server bridge.
 func NewRemoteCodexAppServerLauncher(endpoint, tokenFile string) *RemoteCodexAppServerLauncher {
 	return &RemoteCodexAppServerLauncher{
 		endpoint:  strings.TrimSpace(endpoint),
 		tokenFile: strings.TrimSpace(tokenFile),
 	}
+}
+
+func (*RemoteCodexAppServerLauncher) codexAppServerTransportKind() string {
+	return CodexAppServerTransportWebSocket
 }
 
 func (l *RemoteCodexAppServerLauncher) Start(ctx context.Context, _ string) (CodexAppServerTransport, error) {

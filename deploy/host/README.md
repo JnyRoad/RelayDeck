@@ -75,5 +75,9 @@ does not change PostgreSQL, Redis, existing accounts, or your Codex session.
 
 ```bash
 launchctl bootout "gui/$(id -u)/com.relaydeck.codex-app-server"
+sed -i '' \
+  -e '/^CODEX_APP_SERVER_REMOTE_URL=/d' \
+  -e '/^CODEX_APP_SERVER_REMOTE_TOKEN_FILE_HOST=/d' \
+  "$PWD/deploy/.env"
 docker compose --project-name relaydeck --project-directory "$PWD/deploy" --env-file "$PWD/deploy/.env" -f "$PWD/deploy/docker-compose.local.yml" up -d --force-recreate --no-deps relaydeck
 ```

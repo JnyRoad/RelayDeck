@@ -30,9 +30,9 @@ if [ -z "$codex_bin" ] || [ ! -x "$codex_bin" ]; then
 	exit 1
 fi
 
-# Deliberately do not set CODEX_HOME. The host app-server must use the current
-# macOS user's own Codex session; only the dedicated bridge token is shared
-# with RelayDeck.
+# CODEX_HOME is preserved by the LaunchAgent when the administrator configured
+# one; otherwise Codex uses its ordinary per-user default. Only the dedicated
+# bridge token is shared with RelayDeck.
 exec "$codex_bin" app-server \
 	--listen "ws://127.0.0.1:$BRIDGE_PORT" \
 	--ws-auth capability-token \

@@ -12,6 +12,10 @@
   <dict>
     <key>HOME</key>
     <string>__USER_HOME__</string>
+    <key>CODEX_HOME</key>
+    <string>__CODEX_HOME__</string>
+    <key>CODEX_BIN</key>
+    <string>__CODEX_BIN__</string>
     <key>RELAYDECK_HOST_BRIDGE_DIR</key>
     <string>__BRIDGE_DIR__</string>
   </dict>

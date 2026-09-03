@@ -30,7 +30,7 @@ deploy_dir=$(cd "$deploy_dir" && pwd -P)
 env_file="$deploy_dir/.env"
 [ -f "$env_file" ] || { printf '%s\n' "RelayDeck deployment .env not found: $env_file" >&2; exit 1; }
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
 bridge_script="$script_dir/codex-app-server-bridge.sh"
 plist_template="$script_dir/com.relaydeck.codex-app-server.plist.template"
 [ -x "$bridge_script" ] || { printf '%s\n' "Bridge runner is not executable: $bridge_script" >&2; exit 1; }
@@ -38,6 +38,7 @@ plist_template="$script_dir/com.relaydeck.codex-app-server.plist.template"
 
 bridge_dir="${HOME:?HOME is required}/.relaydeck/codex-app-server"
 token_file="$bridge_dir/bridge.token"
+codex_home="${CODEX_HOME:-$HOME/.codex}"
 launch_agents_dir="$HOME/Library/LaunchAgents"
 plist_path="$launch_agents_dir/com.relaydeck.codex-app-server.plist"
 launch_domain="gui/$(id -u)"
@@ -46,6 +47,24 @@ launch_label="$launch_domain/com.relaydeck.codex-app-server"
 umask 077
 mkdir -p "$bridge_dir" "$launch_agents_dir"
 chmod 700 "$bridge_dir"
+
+if [ -n "${CODEX_BIN:-}" ]; then
+	codex_bin="$CODEX_BIN"
+else
+	PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+	export PATH
+	codex_bin=$(command -v codex || true)
+fi
+[ -n "$codex_bin" ] && [ -x "$codex_bin" ] || {
+	printf '%s\n' "RelayDeck Codex bridge cannot find an executable Codex CLI; set CODEX_BIN." >&2
+	exit 1
+}
+for required_flag in --listen --ws-auth --ws-token-file; do
+	if ! "$codex_bin" app-server --help 2>&1 | grep -F -- "$required_flag" >/dev/null; then
+		printf '%s\n' "RelayDeck Codex bridge requires an app-server supporting $required_flag." >&2
+		exit 1
+	fi
+done
 
 if [ ! -e "$token_file" ]; then
 	token_tmp=$(mktemp "$bridge_dir/bridge.token.XXXXXX")
@@ -80,6 +99,8 @@ tmp_plist=$(mktemp "$launch_agents_dir/com.relaydeck.codex-app-server.XXXXXX")
 sed \
 	-e "s|__BRIDGE_SCRIPT__|$(escape_sed "$bridge_script")|g" \
 	-e "s|__USER_HOME__|$(escape_sed "$HOME")|g" \
+	-e "s|__CODEX_HOME__|$(escape_sed "$codex_home")|g" \
+	-e "s|__CODEX_BIN__|$(escape_sed "$codex_bin")|g" \
 	-e "s|__BRIDGE_DIR__|$(escape_sed "$bridge_dir")|g" \
 	"$plist_template" > "$tmp_plist"
 chmod 600 "$tmp_plist"

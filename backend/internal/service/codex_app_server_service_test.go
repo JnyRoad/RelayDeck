@@ -33,6 +33,25 @@ func TestNewCodexAppServerService_RejectsIncompleteRemoteBridgeConfiguration(t *
 	require.EqualError(t, err, "本机 Codex app-server bridge 配置不完整")
 }
 
+func TestNewCodexAppServerService_IgnoresRemoteTokenFileWithoutRemoteURL(t *testing.T) {
+	t.Setenv("CODEX_APP_SERVER_REMOTE_URL", "")
+	t.Setenv("CODEX_APP_SERVER_REMOTE_TOKEN_FILE", "/run/relaydeck/codex-app-server.token")
+	service := NewCodexAppServerService(CodexAppServerServiceConfig{RootDir: t.TempDir()})
+
+	require.Equal(t, CodexAppServerTransportStdio, service.TransportKind())
+	_, isLocalLauncher := service.launcher.(*ExecCodexAppServerLauncher)
+	require.True(t, isLocalLauncher)
+}
+
+func TestNewCodexAppServerService_UsesRemoteTransportForInjectedRemoteLauncher(t *testing.T) {
+	service := NewCodexAppServerService(CodexAppServerServiceConfig{
+		RootDir:  t.TempDir(),
+		Launcher: NewRemoteCodexAppServerLauncher("ws://host.docker.internal:19881", "/run/relaydeck/codex-app-server.token"),
+	})
+
+	require.Equal(t, CodexAppServerTransportWebSocket, service.TransportKind())
+}
+
 func TestCodexAppServerService_ReportsUnavailableRemoteBridgeWithoutToken(t *testing.T) {
 	tokenFile := filepath.Join(t.TempDir(), "bridge.token")
 	const bridgeToken = "bridge-token-must-never-appear-in-errors"
