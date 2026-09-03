@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/JnyRoad/RelayDeck/internal/config"
+	"github.com/JnyRoad/RelayDeck/internal/modeltrace"
 	"github.com/JnyRoad/RelayDeck/internal/pkg/ctxkey"
 	"github.com/JnyRoad/RelayDeck/internal/pkg/ip"
 	"github.com/JnyRoad/RelayDeck/internal/pkg/logger"
@@ -40,6 +41,7 @@ type OpenAIGatewayHandler struct {
 	errorPassthroughService    *service.ErrorPassthroughService
 	contentModerationService   *service.ContentModerationService
 	securityAuditCoordinator   *securityaudit.Coordinator
+	modelTraceRecorder         modeltrace.Recorder
 	grokMediaEligibilityProber grokMediaEligibilityProber
 	opsService                 *service.OpsService
 	concurrencyHelper          *ConcurrencyHelper
@@ -2479,6 +2481,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	// 建连时刻只用于选号/准入，不作为任何 turn 的计费定价时刻。
 	wsPricingCtx, _ := h.gatewayService.WithOpenAIRequestPricingContext(ctx, apiKey.GroupID)
 	ctx = wsPricingCtx
+	wsTrace := h.newModelWebSocketTurnTracer(c)
+	defer wsTrace.Close(clientLifecycleCtx)
+	firstTurnTraceStarted := false
 
 	for {
 		if ctx.Err() != nil {
@@ -2653,6 +2658,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			ReasoningEffortMappings: reasoningEffortMappings,
 			TurnStarted:             recordTurnStart,
 			BeforeRequest: func(turn int, payload []byte, originalModel string) error {
+				wsTrace.Begin(clientLifecycleCtx, turn, payload)
 				c.Set(securityAuditWSTurnContextKey, turn)
 				service.BeginOpsStreamTurn(c, turn)
 				setCyberTurnBody(turn, payload)
@@ -2681,6 +2687,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					return service.NewOpenAIWSClientCloseError(securityAuditWSCloseStatus(decision), securityAuditWSCloseReason(decision), nil)
 				}
 				return nil
+			},
+			ClientFrameWritten: func(turn int, payload []byte) {
+				wsTrace.AppendClientFrame(clientLifecycleCtx, turn, payload)
 			},
 			MapRequestModel: func(turn int, originalModel string) (string, error) {
 				model := strings.TrimSpace(originalModel)
@@ -2764,6 +2773,18 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if result != nil {
 					turnUpstreamModel = strings.TrimSpace(result.UpstreamModel)
 				}
+				defer wsTrace.Complete(clientLifecycleCtx, turn, modeltrace.FinishInput{
+					Outcome:        openAIWebSocketTraceOutcome(clientLifecycleCtx, result, turnErr),
+					Stream:         true,
+					DurationMS:     openAIWebSocketTraceDurationMS(result, turnStart),
+					FirstByteMS:    openAIWebSocketTraceFirstByteMS(result),
+					UserID:         openAIWebSocketTraceUserID(apiKey),
+					APIKeyID:       openAIWebSocketTraceAPIKeyID(apiKey),
+					GroupID:        openAIWebSocketTraceGroupID(apiKey),
+					AccountID:      openAIWebSocketTraceAccountID(account),
+					RequestedModel: turnRequestedModel,
+					UpstreamModel:  turnUpstreamModel,
+				})
 				var turnMapping service.ChannelMappingResult
 				if snapshot := turnChannelMapping.Load(); snapshot != nil && snapshot.turn == turn {
 					turnMapping = snapshot.mapping
@@ -2848,6 +2869,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		}
 
 		wsFirstMessage := wsAttemptMessage
+		if !firstTurnTraceStarted {
+			wsTrace.Begin(clientLifecycleCtx, 1, firstMessage)
+			firstTurnTraceStarted = true
+		}
 		// 切组/会话失配防护：previous_response_id 未在当前分组命中粘连账号（StickyPreviousHit=false），
 		// 说明该会话链不属于本次调度到的账号，原样转发会触发上游会话链鉴权失败（“鉴权失败，请检查 API Key”）。
 		// 故剥离首包里的 previous_response_id，改用首包内 input 重建上下文；带 function_call_output 的
@@ -2981,6 +3006,105 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		}
 	}
 
+}
+
+// newModelWebSocketTurnTracer creates a best-effort trace adapter for one
+// upgraded client connection while retaining the gateway correlation ID.
+func (h *OpenAIGatewayHandler) newModelWebSocketTurnTracer(c *gin.Context) *modeltrace.WebSocketTurnTracer {
+	requestID := ""
+	route := "/v1/responses"
+	if c != nil {
+		if c.Request != nil {
+			requestID, _ = c.Request.Context().Value(ctxkey.ClientRequestID).(string)
+			if c.Request.URL != nil && strings.TrimSpace(c.Request.URL.Path) != "" {
+				route = c.Request.URL.Path
+			}
+		}
+		if matched := strings.TrimSpace(c.FullPath()); matched != "" {
+			route = matched
+		}
+	}
+	var recorder modeltrace.Recorder
+	if h != nil {
+		recorder = h.modelTraceRecorder
+	}
+	return modeltrace.NewWebSocketTurnTracer(recorder, requestID, route)
+}
+
+// openAIWebSocketTraceOutcome maps a terminal turn result to a stable
+// diagnostic outcome without changing the existing WebSocket close semantics.
+func openAIWebSocketTraceOutcome(ctx context.Context, result *service.OpenAIForwardResult, turnErr error) modeltrace.Outcome {
+	if result != nil && result.ClientDisconnect {
+		return modeltrace.OutcomePartial
+	}
+	if turnErr != nil {
+		if result != nil {
+			return modeltrace.OutcomePartial
+		}
+		if ctx != nil && ctx.Err() != nil {
+			return modeltrace.OutcomeClientCancelled
+		}
+		return modeltrace.OutcomeFailed
+	}
+	return modeltrace.OutcomeSucceeded
+}
+
+// openAIWebSocketTraceDurationMS returns the turn duration supplied by the
+// forwarder or a safe elapsed-time fallback when the forwarder has no result.
+func openAIWebSocketTraceDurationMS(result *service.OpenAIForwardResult, startedAt time.Time) int {
+	if result != nil && result.Duration > 0 {
+		return int(result.Duration.Milliseconds())
+	}
+	if startedAt.IsZero() {
+		return 0
+	}
+	return int(time.Since(startedAt).Milliseconds())
+}
+
+// openAIWebSocketTraceFirstByteMS copies the existing forwarder's first-token
+// timing value without retaining any upstream response headers or payloads.
+func openAIWebSocketTraceFirstByteMS(result *service.OpenAIForwardResult) *int {
+	if result == nil || result.FirstTokenMs == nil {
+		return nil
+	}
+	value := *result.FirstTokenMs
+	return &value
+}
+
+// openAIWebSocketTraceUserID returns the authenticated owner when available.
+func openAIWebSocketTraceUserID(apiKey *service.APIKey) *int64 {
+	if apiKey == nil || apiKey.UserID <= 0 {
+		return nil
+	}
+	value := apiKey.UserID
+	return &value
+}
+
+// openAIWebSocketTraceAPIKeyID returns the authenticated API key identifier.
+func openAIWebSocketTraceAPIKeyID(apiKey *service.APIKey) *int64 {
+	if apiKey == nil || apiKey.ID <= 0 {
+		return nil
+	}
+	value := apiKey.ID
+	return &value
+}
+
+// openAIWebSocketTraceGroupID returns a copy of the selected group identifier.
+func openAIWebSocketTraceGroupID(apiKey *service.APIKey) *int64 {
+	if apiKey == nil || apiKey.GroupID == nil || *apiKey.GroupID <= 0 {
+		return nil
+	}
+	value := *apiKey.GroupID
+	return &value
+}
+
+// openAIWebSocketTraceAccountID returns the selected upstream account ID.
+func openAIWebSocketTraceAccountID(account *service.Account) *int64 {
+	if account == nil || account.ID <= 0 {
+		return nil
+	}
+	value := account.ID
+	return &value
 }
 
 func (h *OpenAIGatewayHandler) recoverResponsesPanic(c *gin.Context, streamStarted *bool) {

@@ -92,7 +92,7 @@ func RegisterAdminRoutes(
 		registerSubscriptionRoutes(admin, h)
 
 		// 使用记录管理
-		registerUsageRoutes(admin, h)
+		registerUsageRoutes(admin, h, stepUpAuth)
 
 		// 用户属性管理
 		registerUserAttributeRoutes(admin, h)
@@ -691,7 +691,7 @@ func registerSubscriptionRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	admin.GET("/users/:id/subscriptions", h.Admin.Subscription.ListByUser)
 }
 
-func registerUsageRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+func registerUsageRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth middleware.StepUpAuthMiddleware) {
 	usage := admin.Group("/usage")
 	{
 		usage.GET("", h.Admin.Usage.List)
@@ -701,6 +701,20 @@ func registerUsageRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		usage.GET("/cleanup-tasks", h.Admin.Usage.ListCleanupTasks)
 		usage.POST("/cleanup-tasks", h.Admin.Usage.CreateCleanupTask)
 		usage.POST("/cleanup-tasks/:id/cancel", h.Admin.Usage.CancelCleanupTask)
+	}
+	registerModelTraceRoutes(admin, h, stepUpAuth)
+}
+
+// registerModelTraceRoutes 注册模型调用追踪的索引、按需正文和保留期管理接口。
+func registerModelTraceRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth middleware.StepUpAuthMiddleware) {
+	traces := admin.Group("/model-traces")
+	{
+		traces.GET("", h.Admin.ModelTrace.List)
+		traces.GET("/config", h.Admin.ModelTrace.GetConfig)
+		traces.PUT("/config", gin.HandlerFunc(stepUpAuth), h.Admin.ModelTrace.UpdateConfig)
+		traces.GET("/cleanup-preview", h.Admin.ModelTrace.PreviewCleanup)
+		traces.POST("/cleanup", gin.HandlerFunc(stepUpAuth), h.Admin.ModelTrace.RunCleanup)
+		traces.GET("/:traceID", gin.HandlerFunc(stepUpAuth), h.Admin.ModelTrace.Detail)
 	}
 }
 

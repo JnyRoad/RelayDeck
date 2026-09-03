@@ -3,6 +3,7 @@ package handler
 import (
 	"github.com/JnyRoad/RelayDeck/internal/config"
 	"github.com/JnyRoad/RelayDeck/internal/handler/admin"
+	"github.com/JnyRoad/RelayDeck/internal/modeltrace"
 	"github.com/JnyRoad/RelayDeck/internal/securityaudit"
 	"github.com/JnyRoad/RelayDeck/internal/service"
 
@@ -32,6 +33,7 @@ func ProvideAdminHandlers(
 	systemHandler *admin.SystemHandler,
 	subscriptionHandler *admin.SubscriptionHandler,
 	usageHandler *admin.UsageHandler,
+	modelTraceHandler *admin.ModelTraceHandler,
 	userAttributeHandler *admin.UserAttributeHandler,
 	errorPassthroughHandler *admin.ErrorPassthroughHandler,
 	tlsFingerprintProfileHandler *admin.TLSFingerprintProfileHandler,
@@ -74,6 +76,7 @@ func ProvideAdminHandlers(
 		System:                 systemHandler,
 		Subscription:           subscriptionHandler,
 		Usage:                  usageHandler,
+		ModelTrace:             modelTraceHandler,
 		UserAttribute:          userAttributeHandler,
 		ErrorPassthrough:       errorPassthroughHandler,
 		TLSFingerprintProfile:  tlsFingerprintProfileHandler,
@@ -130,11 +133,13 @@ func ProvideOpenAIGatewayHandler(
 	grokQuotaService *service.GrokQuotaService,
 	cfg *config.Config,
 	coordinator *securityaudit.Coordinator,
+	modelTraceRecorder modeltrace.Recorder,
 ) *OpenAIGatewayHandler {
 	gatewayService.SetPluginManager(pluginManager)
 	h := NewOpenAIGatewayHandler(gatewayService, concurrencyService, billingCacheService, apiKeyService,
 		usageRecordWorkerPool, errorPassthroughService, contentModerationService, opsService, cfg)
 	h.securityAuditCoordinator = coordinator
+	h.modelTraceRecorder = modelTraceRecorder
 	h.grokMediaEligibilityProber = grokQuotaService
 	return h
 }
@@ -269,6 +274,7 @@ var ProviderSet = wire.NewSet(
 	ProvideSystemHandler,
 	admin.NewSubscriptionHandler,
 	admin.NewUsageHandler,
+	admin.NewModelTraceHandler,
 	admin.NewUserAttributeHandler,
 	admin.NewErrorPassthroughHandler,
 	admin.NewTLSFingerprintProfileHandler,

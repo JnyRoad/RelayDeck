@@ -29,6 +29,7 @@ type openAIWSClientFrameConn struct {
 	// model identifier they supplied for the current turn.
 	restoreResponseModel func([]byte) []byte
 	restoreToolNames     func([]byte) []byte
+	onFrameWritten       func(coderws.MessageType, []byte)
 }
 
 // openAIWSPolicyEnforcingFrameConn wraps a client-side FrameConn and runs
@@ -651,7 +652,11 @@ func (c *openAIWSClientFrameConn) WriteFrame(ctx context.Context, msgType coderw
 			payload = c.restoreToolNames(payload)
 		}
 	}
-	return c.conn.Write(ctx, msgType, payload)
+	err := c.conn.Write(ctx, msgType, payload)
+	if err == nil && c.onFrameWritten != nil {
+		c.onFrameWritten(msgType, payload)
+	}
+	return err
 }
 
 func (c *openAIWSClientFrameConn) Close() error {
@@ -968,6 +973,18 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		},
 		restoreToolNames: func(payload []byte) []byte {
 			return restoreCodexToolNamesFromContext(c, payload)
+		},
+		onFrameWritten: func(msgType coderws.MessageType, payload []byte) {
+			if hooks == nil || hooks.ClientFrameWritten == nil || msgType != coderws.MessageText {
+				return
+			}
+			turnNo := int(completedTurns.Load()) + 1
+			if openAIWSPassthroughIsTerminalOutput(payload) {
+				turnNo = int(completedTurns.Load())
+			}
+			if turnNo > 0 {
+				hooks.ClientFrameWritten(turnNo, payload)
+			}
 		},
 	}
 	policyClientConn := &openAIWSPolicyEnforcingFrameConn{
