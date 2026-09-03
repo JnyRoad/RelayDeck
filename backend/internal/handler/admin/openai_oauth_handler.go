@@ -18,10 +18,21 @@ import (
 
 // OpenAIOAuthHandler handles OpenAI OAuth-related operations
 type OpenAIOAuthHandler struct {
-	openaiOAuthService *service.OpenAIOAuthService
-	adminService       service.AdminService
-	quotaService       openAIQuotaService
-	rateLimitService   openAIAccountStateRecoverer
+	openaiOAuthService    *service.OpenAIOAuthService
+	adminService          service.AdminService
+	quotaService          openAIQuotaService
+	rateLimitService      openAIAccountStateRecoverer
+	appServerLoginService codexAppServerLoginService
+}
+
+// codexAppServerLoginService keeps the official app-server protocol behind a
+// narrow handler boundary. It intentionally exposes login state, never tokens.
+type codexAppServerLoginService interface {
+	StartLogin(ctx context.Context, mode service.CodexAppServerLoginMode) (*service.CodexAppServerLogin, error)
+	GetLogin(sessionID string) (*service.CodexAppServerLogin, error)
+	CompleteLogin(sessionID string) (string, error)
+	FinalizeLogin(sessionID string) error
+	CancelLogin(ctx context.Context, sessionID string) error
 }
 
 type openAIQuotaService interface {
@@ -84,8 +95,9 @@ func NewOpenAIOAuthHandler(
 	rateLimitService *service.RateLimitService,
 ) *OpenAIOAuthHandler {
 	h := &OpenAIOAuthHandler{
-		openaiOAuthService: openaiOAuthService,
-		adminService:       adminService,
+		openaiOAuthService:    openaiOAuthService,
+		adminService:          adminService,
+		appServerLoginService: service.NewCodexAppServerService(service.CodexAppServerServiceConfig{}),
 	}
 	// Assign through explicit nil checks: storing a nil *Service in an interface
 	// field yields a non-nil interface, which would silently defeat the
@@ -97,6 +109,137 @@ func NewOpenAIOAuthHandler(
 		h.rateLimitService = rateLimitService
 	}
 	return h
+}
+
+type startCodexAppServerLoginRequest struct {
+	Mode service.CodexAppServerLoginMode `json:"mode"`
+}
+
+// StartAppServerLogin starts a login owned by the official Codex app-server.
+// POST /api/v1/admin/openai/app-server/login/start
+func (h *OpenAIOAuthHandler) StartAppServerLogin(c *gin.Context) {
+	if h.appServerLoginService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Codex app-server 登录服务不可用")
+		return
+	}
+	var req startCodexAppServerLoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if strings.TrimSpace(string(req.Mode)) == "" {
+		req.Mode = service.CodexAppServerLoginModeDeviceCode
+	}
+	login, err := h.appServerLoginService.StartLogin(c.Request.Context(), req.Mode)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, login)
+}
+
+// GetAppServerLogin returns the non-secret progress of an official app-server
+// login. The private-server UI polls this endpoint; no provider callback is
+// received by RelayDeck.
+// GET /api/v1/admin/openai/app-server/login/:session_id
+func (h *OpenAIOAuthHandler) GetAppServerLogin(c *gin.Context) {
+	if h.appServerLoginService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Codex app-server 登录服务不可用")
+		return
+	}
+	login, err := h.appServerLoginService.GetLogin(c.Param("session_id"))
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, login)
+}
+
+// CancelAppServerLogin cancels an incomplete official app-server login and
+// deletes its isolated profile directory.
+// POST /api/v1/admin/openai/app-server/login/:session_id/cancel
+func (h *OpenAIOAuthHandler) CancelAppServerLogin(c *gin.Context) {
+	if h.appServerLoginService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Codex app-server 登录服务不可用")
+		return
+	}
+	if err := h.appServerLoginService.CancelLogin(c.Request.Context(), c.Param("session_id")); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"status": "cancelled"})
+}
+
+type createCodexAppServerAccountRequest struct {
+	Name     string  `json:"name" binding:"required"`
+	Notes    *string `json:"notes"`
+	Priority int     `json:"priority"`
+}
+
+// CreateAppServerAccount persists only a reference to an already-authenticated
+// official app-server profile. OAuth tokens and the profile filesystem path do
+// not enter RelayDeck's database or HTTP API.
+// POST /api/v1/admin/openai/app-server/login/:session_id/create-account
+func (h *OpenAIOAuthHandler) CreateAppServerAccount(c *gin.Context) {
+	if h.appServerLoginService == nil || h.adminService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Codex app-server 登录服务不可用")
+		return
+	}
+	var req createCodexAppServerAccountRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		response.BadRequest(c, "name is required")
+		return
+	}
+	if req.Priority < 0 {
+		response.BadRequest(c, "priority must be >= 0")
+		return
+	}
+
+	profileID, err := h.appServerLoginService.CompleteLogin(c.Param("session_id"))
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	notSchedulable := false
+	account, err := h.adminService.CreateAccount(c.Request.Context(), &service.CreateAccountInput{
+		Name:     req.Name,
+		Notes:    req.Notes,
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeOAuth,
+		Credentials: map[string]any{
+			"auth_provider":         "codex_app_server",
+			"app_server_profile_id": profileID,
+		},
+		Extra: map[string]any{
+			"app_server_managed":   true,
+			"app_server_transport": "stdio",
+		},
+		Concurrency:           1,
+		Priority:              req.Priority,
+		Schedulable:           &notSchedulable,
+		SkipDefaultGroupBind:  true,
+		SkipMixedChannelCheck: true,
+	})
+	if err != nil {
+		// No account references this completed profile, so it must be released
+		// before returning a persistence error to the browser.
+		if cancelErr := h.appServerLoginService.CancelLogin(c.Request.Context(), c.Param("session_id")); cancelErr != nil {
+			slog.Warn("release_codex_app_server_login_failed", "profile_id", profileID, "error", cancelErr)
+		}
+		response.ErrorFrom(c, err)
+		return
+	}
+	if err := h.appServerLoginService.FinalizeLogin(c.Param("session_id")); err != nil {
+		// The account is already safely persisted. Keep the error in logs for
+		// operator cleanup rather than encouraging a duplicate account creation.
+		slog.Warn("finalize_codex_app_server_login_failed", "profile_id", profileID, "error", err)
+	}
+	response.Success(c, dto.AccountFromService(account))
 }
 
 // OpenAIGenerateAuthURLRequest represents the request for generating OpenAI auth URL
@@ -253,6 +396,10 @@ func (h *OpenAIOAuthHandler) RefreshAccountToken(c *gin.Context) {
 	// Only refresh OAuth-based accounts
 	if !account.IsOAuth() {
 		response.BadRequest(c, "Cannot refresh non-OAuth account credentials")
+		return
+	}
+	if account.IsCodexAppServerManaged() {
+		response.BadRequest(c, "该账号由官方 app-server 管理，请在其运行时中处理登录状态")
 		return
 	}
 

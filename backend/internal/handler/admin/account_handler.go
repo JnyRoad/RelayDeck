@@ -2549,6 +2549,17 @@ func (h *AccountHandler) SetSchedulable(c *gin.Context) {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
+	if req.Schedulable {
+		current, err := h.adminService.GetAccount(c.Request.Context(), accountID)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		if current.IsCodexAppServerManaged() {
+			response.BadRequest(c, "官方 app-server 管理资料不能加入旧 API 调度链路")
+			return
+		}
+	}
 
 	account, err := h.adminService.SetAccountSchedulable(c.Request.Context(), accountID, req.Schedulable)
 	if err != nil {

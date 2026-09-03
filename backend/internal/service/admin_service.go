@@ -376,6 +376,10 @@ type CreateAccountInput struct {
 	ExpiresAt          *int64
 	AutoPauseOnExpired *bool
 	ProbeEnabled       *bool
+	// Schedulable overrides the normal enabled-by-default scheduler state. Nil
+	// preserves existing behavior; false is used for runtime-managed profiles
+	// that cannot serve RelayDeck's legacy HTTP proxy path.
+	Schedulable *bool
 	// SkipDefaultGroupBind prevents auto-binding to platform default group when GroupIDs is empty.
 	SkipDefaultGroupBind bool
 	// SkipMixedChannelCheck skips the mixed channel risk check when binding groups.
