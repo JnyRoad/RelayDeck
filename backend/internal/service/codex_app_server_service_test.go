@@ -3,12 +3,50 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestNewCodexAppServerService_UsesRemoteBridgeWhenConfigured(t *testing.T) {
+	tokenFile := filepath.Join(t.TempDir(), "bridge.token")
+	require.NoError(t, os.WriteFile(tokenFile, []byte("bridge-test-token\n"), 0o600))
+	t.Setenv("CODEX_APP_SERVER_REMOTE_URL", "ws://host.docker.internal:19881")
+	t.Setenv("CODEX_APP_SERVER_REMOTE_TOKEN_FILE", tokenFile)
+
+	service := NewCodexAppServerService(CodexAppServerServiceConfig{RootDir: t.TempDir()})
+
+	require.Equal(t, "websocket", service.TransportKind())
+}
+
+func TestNewCodexAppServerService_RejectsIncompleteRemoteBridgeConfiguration(t *testing.T) {
+	t.Setenv("CODEX_APP_SERVER_REMOTE_URL", "ws://host.docker.internal:19881")
+	t.Setenv("CODEX_APP_SERVER_REMOTE_TOKEN_FILE", "")
+	service := NewCodexAppServerService(CodexAppServerServiceConfig{RootDir: t.TempDir()})
+
+	_, err := service.StartLogin(context.Background(), CodexAppServerLoginModeDeviceCode)
+
+	require.EqualError(t, err, "本机 Codex app-server bridge 配置不完整")
+}
+
+func TestCodexAppServerService_ReportsUnavailableRemoteBridgeWithoutToken(t *testing.T) {
+	tokenFile := filepath.Join(t.TempDir(), "bridge.token")
+	const bridgeToken = "bridge-token-must-never-appear-in-errors"
+	require.NoError(t, os.WriteFile(tokenFile, []byte(bridgeToken+"\n"), 0o600))
+	t.Setenv("CODEX_APP_SERVER_REMOTE_URL", "ws://127.0.0.1:1")
+	t.Setenv("CODEX_APP_SERVER_REMOTE_TOKEN_FILE", tokenFile)
+	service := NewCodexAppServerService(CodexAppServerServiceConfig{RootDir: t.TempDir()})
+
+	_, err := service.StartLogin(context.Background(), CodexAppServerLoginModeDeviceCode)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "连接本机 Codex app-server 失败")
+	require.NotContains(t, err.Error(), bridgeToken)
+}
 
 // This regression test catches a login session that drops the app-server's
 // completion notification: the UI would otherwise keep polling forever after
