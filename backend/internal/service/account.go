@@ -1292,13 +1292,6 @@ func (a *Account) IsOpenAIOAuth() bool {
 	return a.IsOpenAI() && a.Type == AccountTypeOAuth
 }
 
-// IsCodexAppServerManaged identifies an account whose ChatGPT authentication
-// and credentials are owned by the official Codex app-server profile. Such an
-// account is deliberately excluded from the legacy OpenAI HTTP relay path.
-func (a *Account) IsCodexAppServerManaged() bool {
-	return a != nil && a.IsOpenAIOAuth() && a.GetCredential("auth_provider") == "codex_app_server"
-}
-
 // IsOpenAIOAuthLike reports OpenAI credentials that use the ChatGPT/Codex
 // inference protocol. Setup tokens share that forwarding contract but do not
 // participate in the refreshable OAuth credential lifecycle.
@@ -1309,9 +1302,6 @@ func (a *Account) IsOpenAIOAuthLike() bool {
 // UsesOpenAICodexProtocol preserves legacy OpenAI gateway OAuth routing for
 // accounts whose platform is implicit, while adding OpenAI SetupToken.
 func (a *Account) UsesOpenAICodexProtocol() bool {
-	if a.IsCodexAppServerManaged() {
-		return false
-	}
 	return a != nil && (a.Type == AccountTypeOAuth || a.IsOpenAIOAuthLike())
 }
 

@@ -8165,7 +8165,7 @@
                     </div>
                   </div>
                 </div>
-                <!-- Row 4: Enabled payment types (provider badges like relaydeckpay) -->
+                <!-- Row 4: Enabled payment types and provider badges. -->
                 <div>
                   <label class="input-label">{{
                     t("admin.settings.payment.enabledPaymentTypes")

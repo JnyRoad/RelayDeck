@@ -39,8 +39,8 @@ inspect_resource() {
         label_value="other"
     fi
     case "${resource_name}" in
-        sub2api-apple-postgres) address="192.168.65.2/24" ;;
-        sub2api-apple-redis) address="192.168.65.3/24" ;;
+        relaydeck-apple-postgres) address="192.168.65.2/24" ;;
+        relaydeck-apple-redis) address="192.168.65.3/24" ;;
     esac
 
     printf '[{"configuration":{"labels":{"org.relaydeck.stack":"%s"}},"status":{"networks":[{"ipv4Address":"%s"}]}}]\n' \

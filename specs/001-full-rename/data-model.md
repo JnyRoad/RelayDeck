@@ -5,7 +5,7 @@ existing configuration, runtime state, and generated client artifacts.
 
 | Entity | Previous value family | New value family | Lifecycle |
 |---|---|---|---|
-| Go module | `github.com/Wei-Shaw/sub2api` | `github.com/JnyRoad/RelayDeck` | Compile-time import resolution |
+| Go module | legacy module path | `github.com/JnyRoad/RelayDeck` | Compile-time import resolution |
 | Product display name | mixed display variants | `RelayDeck` | UI, logs, templates, release metadata |
 | Runtime namespace | lower-case former product prefix | `relaydeck` | service, binary, containers, cache, storage |
 | Environment namespace | upper-case former product prefix | `RELAYDECK` | generated client and deployment settings |

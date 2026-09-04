@@ -113,6 +113,10 @@ RelayDeck-only.
 - [X] T018 Run `git diff --check`, confirm changed legacy-named paths are gone,
   and document any unverified Docker registry or DNS state in
   `specs/001-full-rename/quickstart.md`.
+- [X] T019 Rewrite the remaining documentation, legal, historical, and fixture
+  references under the user-authorized full-repository scope; neutralize
+  third-party brands and referral codes without inventing replacements; run a
+  zero-legacy-token scan.
 
 ## Dependencies & Execution Order
 

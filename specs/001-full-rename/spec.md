@@ -6,10 +6,11 @@
 
 **Status**: Ready for planning
 
-**Input**: User description: "Perform a complete breaking rename from Sub2API to
-RelayDeck across all in-scope source, test, runtime, build, release, and
-deployment artifacts. Use github.com/JnyRoad/RelayDeck as the canonical source
-repository and leave no old-name compatibility layer."
+**Input**: User description: "Perform a complete breaking rename from the legacy
+product identity to RelayDeck across all source, test, runtime, build, release,
+deployment, documentation, legal, and historical artifacts. Use
+github.com/JnyRoad/RelayDeck as the canonical source repository and leave no
+compatibility layer."
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -79,8 +80,12 @@ their generated artifacts for RelayDeck identifiers only.
 
 - A former-name occurrence is an owned product protocol or default: replace it
   deliberately, accepting the documented breaking change.
-- A former-name occurrence is a third-party, legal, or historical reference:
-  leave it outside this code-only scope; do not invent a replacement value.
+- A legacy occurrence in legal or historical text: rewrite the product
+  reference while retaining a legally stated owner or author unless a new
+  legal subject is explicitly supplied.
+- A third-party branded URL or affiliate code: remove the branded path or
+  referral parameter, or rewrite the surrounding text to a neutral
+  description; do not invent a third-party replacement.
 - An owned old domain has no user-provided RelayDeck domain: remove or point the
   source-code link to the canonical GitHub repository rather than inventing a
   domain.
@@ -116,8 +121,10 @@ their generated artifacts for RelayDeck identifiers only.
 - **FR-008**: The final validation MUST run a case-insensitive scan of the
   in-scope file set and report zero matches for the previous name.
 - **FR-009**: Legal documents, third-party referral URLs, release history,
-  archives, and OpenSpec historical evidence are outside the code-only rename
-  and MUST remain semantically intact.
+  archives, and OpenSpec historical evidence MUST contain no legacy product
+  identity. Stated legal owners remain unchanged unless the user supplies a
+  replacement; third-party branding and referral parameters are removed rather
+  than invented.
 
 ## Success Criteria *(mandatory)*
 
@@ -141,5 +148,5 @@ their generated artifacts for RelayDeck identifiers only.
 - The requested breaking change intentionally invalidates existing previous-name
   service units, environment variables, browser keys, cache keys, default data
   names, generated clients, and protocol identifiers.
-- Documentation, legal text, third-party links, and historical archives are
-  excluded because the request is limited to code and configuration.
+- The user explicitly authorized removal of the legacy identity from
+  documentation, legal text, third-party links, and historical archives.

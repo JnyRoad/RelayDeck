@@ -1136,23 +1136,6 @@ export default {
             OPENAI_OAUTH_PROXY_REQUIRED:
               '未设置代理，当前服务器无法直连 OpenAI，导致 OpenAI OAuth 请求失败。请先选择可访问 OpenAI 的代理后重试；如果授权码已失效，请重新生成授权链接。'
           },
-          appServer: {
-            methodLabel: 'ChatGPT 授权方式',
-            legacyTitle: '现有 OAuth 流程',
-            legacyDescription: '保留现有的浏览器回调与令牌管理方式。',
-            managedTitle: '官方 app-server 管理登录',
-            managedDescription: '由官方运行时完成设备码登录，不交换或保存订阅令牌。',
-            isolatedHint: '该资料仅供官方 app-server 运行时使用，不加入原有 API 调度、分组或 HTTP 转发链路。',
-            title: '官方 app-server 管理登录',
-            description: '在当前浏览器完成设备码验证。认证完成会由官方运行时自动通知此页面。',
-            startDeviceCode: '生成设备码',
-            deviceCodeInstructions: '打开下方官方验证地址，并输入设备码以完成登录。',
-            waiting: '正在等待官方运行时确认…',
-            refresh: '立即检查',
-            completed: '认证已完成。现在可以创建官方运行时资料。',
-            createAccount: '创建官方运行时资料',
-            failed: '官方 app-server 登录失败'
-          },
           // Refresh Token auth
           refreshTokenAuth: '手动输入 RT',
           refreshTokenDesc: '输入您已有的 OpenAI Refresh Token，支持批量输入（每行一个），系统将自动验证并创建账号。',
