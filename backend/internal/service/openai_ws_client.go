@@ -26,6 +26,8 @@ const (
 	openAIWSProxyClientCacheIdleTTL           = 15 * time.Minute
 )
 
+const openAIWSCodexDeflateExtension = "permessage-deflate; client_max_window_bits"
+
 type OpenAIWSTransportMetricsSnapshot struct {
 	ProxyClientCacheHits   int64   `json:"proxy_client_cache_hits"`
 	ProxyClientCacheMisses int64   `json:"proxy_client_cache_misses"`
@@ -96,6 +98,7 @@ type openAIWSProxyClientEntry struct {
 	lastUsedUnixNano int64
 }
 
+// Dial 建立 OpenAI 上游 WebSocket 连接，保留代理语义并收集失败握手的有限诊断信息。
 func (d *coderOpenAIWSClientDialer) Dial(
 	ctx context.Context,
 	wsURL string,
@@ -111,13 +114,17 @@ func (d *coderOpenAIWSClientDialer) Dial(
 		HTTPHeader:      cloneHeader(headers),
 		CompressionMode: coderws.CompressionContextTakeover,
 	}
+	baseHTTPClient := http.DefaultClient
 	if proxy := strings.TrimSpace(proxyURL); proxy != "" {
 		proxyClient, err := d.proxyHTTPClient(proxy)
 		if err != nil {
 			return nil, 0, nil, err
 		}
-		opts.HTTPClient = proxyClient
+		baseHTTPClient = proxyClient
 	}
+	// coder/websocket 会以自身默认的 permessage-deflate offer 覆盖 HTTPHeader。
+	// 在其实际发送请求的 Transport 边界重写，才能与 Codex CLI 的握手协商保持一致。
+	opts.HTTPClient = newOpenAIWSCodexHandshakeHTTPClient(baseHTTPClient)
 
 	conn, resp, err := coderws.Dial(ctx, targetURL, opts)
 	if err != nil {
@@ -142,6 +149,85 @@ func (d *coderOpenAIWSClientDialer) Dial(
 		respHeaders = cloneHeader(resp.Header)
 	}
 	return &coderOpenAIWSClientConn{conn: conn}, 0, respHeaders, nil
+}
+
+// newOpenAIWSCodexHandshakeHTTPClient 返回仅用于 OpenAI WS 建连的客户端副本。
+// 它保留原客户端的代理、超时和重定向语义，只在真正出站时补齐 Codex 的压缩协商 offer。
+func newOpenAIWSCodexHandshakeHTTPClient(base *http.Client) *http.Client {
+	if base == nil {
+		base = http.DefaultClient
+	}
+	client := *base
+	transport := base.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	client.Transport = openAIWSCodexHandshakeTransport{base: transport}
+	return &client
+}
+
+type openAIWSCodexHandshakeTransport struct {
+	base http.RoundTripper
+}
+
+// RoundTrip 在 WebSocket 库生成握手头之后写入 Codex CLI 的 deflate offer，且不修改调用方请求对象。
+func (t openAIWSCodexHandshakeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req == nil {
+		return nil, errors.New("openai websocket handshake request is nil")
+	}
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	cloned := req.Clone(req.Context())
+	cloned.Header = cloneHeader(req.Header)
+	cloned.Header.Set("Sec-WebSocket-Extensions", openAIWSCodexDeflateExtension)
+	resp, err := base.RoundTrip(cloned)
+	if err != nil {
+		return resp, err
+	}
+	normalizeOpenAIWSCodexDeflateResponse(resp)
+	return resp, nil
+}
+
+// normalizeOpenAIWSCodexDeflateResponse 仅消除与当前 flate 实现等价的 15 位窗口选择。
+// 其他窗口值保留给底层库拒绝，避免在无法编码相同窗口大小时继续使用该连接。
+func normalizeOpenAIWSCodexDeflateResponse(resp *http.Response) {
+	if resp == nil || resp.Header == nil {
+		return
+	}
+	for name, values := range resp.Header {
+		if !strings.EqualFold(name, "Sec-WebSocket-Extensions") {
+			continue
+		}
+		for index, value := range values {
+			values[index] = stripOpenAIWSClientMaxWindowBits15(value)
+		}
+	}
+}
+
+// stripOpenAIWSClientMaxWindowBits15 移除服务端对 15 位客户端窗口的显式选择。
+// Go flate 的可用编码窗口正是 15 位；较小窗口必须保持原样并由握手校验拒绝。
+func stripOpenAIWSClientMaxWindowBits15(extension string) string {
+	parts := strings.Split(extension, ";")
+	if len(parts) < 2 || !strings.EqualFold(strings.TrimSpace(parts[0]), "permessage-deflate") {
+		return extension
+	}
+	kept := make([]string, 0, len(parts))
+	kept = append(kept, strings.TrimSpace(parts[0]))
+	removed := false
+	for _, part := range parts[1:] {
+		name, value, hasValue := strings.Cut(part, "=")
+		if hasValue && strings.EqualFold(strings.TrimSpace(name), "client_max_window_bits") && strings.TrimSpace(value) == "15" {
+			removed = true
+			continue
+		}
+		kept = append(kept, strings.TrimSpace(part))
+	}
+	if !removed {
+		return extension
+	}
+	return strings.Join(kept, "; ")
 }
 
 func (d *coderOpenAIWSClientDialer) proxyHTTPClient(proxy string) (*http.Client, error) {
