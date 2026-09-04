@@ -56,6 +56,8 @@ export interface ModelTracePayload {
   created_at: string
   content?: string
   content_status: 'available' | 'unavailable' | 'not_captured'
+  storage_mode?: 'inline' | 'chunked'
+  next_chunk_no?: number
 }
 
 export interface ModelTraceAttempt {
@@ -84,6 +86,14 @@ export interface ModelTraceConversation {
   linked: boolean
   link_source: string
   turns: ModelTraceDetail[]
+  older_cursor?: string
+  newer_cursor?: string
+}
+
+export interface ModelTraceConversationPageParams {
+  direction?: 'older' | 'newer'
+  cursor?: string
+  limit?: number
 }
 
 export interface ModelTraceQueryParams {
@@ -128,17 +138,17 @@ export async function getDetail(traceID: string): Promise<ModelTraceDetail> {
   return data
 }
 
-/** 仅在管理员打开对应页签后请求一种已脱敏的正文。 */
-export async function getPayload(traceID: string, kind: ModelTracePayload['kind'], attemptNo = 0): Promise<ModelTracePayload> {
+/** 仅在管理员打开对应页签后请求一种正文的单个安全分块页。 */
+export async function getPayload(traceID: string, kind: ModelTracePayload['kind'], attemptNo = 0, chunkNo = 0): Promise<ModelTracePayload> {
   const { data } = await apiClient.get<ModelTracePayload>(`/admin/model-traces/${encodeURIComponent(traceID)}/payloads/${encodeURIComponent(kind)}`, {
-    params: { attempt_no: attemptNo },
+    params: { attempt_no: attemptNo, chunk_no: chunkNo },
   })
   return data
 }
 
-/** 加载仅由显式会话或响应谱系证明关联的回放索引，不解密正文。 */
-export async function getConversation(traceID: string): Promise<ModelTraceConversation> {
-  const { data } = await apiClient.get<ModelTraceConversation>(`/admin/model-traces/${encodeURIComponent(traceID)}/conversation`)
+/** 加载仅由显式会话或响应谱系证明关联的一页回放索引，不解密正文。 */
+export async function getConversation(traceID: string, params?: ModelTraceConversationPageParams): Promise<ModelTraceConversation> {
+  const { data } = await apiClient.get<ModelTraceConversation>(`/admin/model-traces/${encodeURIComponent(traceID)}/conversation`, { params })
   return data
 }
 

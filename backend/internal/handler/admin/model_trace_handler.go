@@ -77,14 +77,18 @@ func (h *ModelTraceHandler) Detail(c *gin.Context) {
 	response.Success(c, detail)
 }
 
-// Conversation returns only protocol-confirmed replay turns and their payload
-// metadata. Administrators must still select each individual body to decrypt it.
+// Conversation returns one bounded protocol-confirmed replay window and its
+// payload metadata. Administrators must still select each individual body page.
 func (h *ModelTraceHandler) Conversation(c *gin.Context) {
 	if h == nil || h.queryService == nil {
 		response.InternalError(c, "Model trace query is unavailable")
 		return
 	}
-	conversation, err := h.queryService.Conversation(c.Request.Context(), c.Param("traceID"))
+	page, ok := parseModelTraceConversationPage(c)
+	if !ok {
+		return
+	}
+	conversation, err := h.queryService.ConversationPage(c.Request.Context(), c.Param("traceID"), page)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -92,7 +96,25 @@ func (h *ModelTraceHandler) Conversation(c *gin.Context) {
 	response.Success(c, conversation)
 }
 
-// Payload 返回管理员明确选中的一种已脱敏正文，避免详情页一次读取全部密文。
+// parseModelTraceConversationPage validates only transport-safe replay paging
+// inputs; service validation applies the final fixed fifty-turn maximum.
+func parseModelTraceConversationPage(c *gin.Context) (modeltrace.ConversationPageRequest, bool) {
+	page := modeltrace.ConversationPageRequest{
+		Direction: strings.TrimSpace(c.Query("direction")),
+		Cursor:    strings.TrimSpace(c.Query("cursor")),
+	}
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit < 1 {
+			response.BadRequest(c, "Invalid limit")
+			return modeltrace.ConversationPageRequest{}, false
+		}
+		page.Limit = limit
+	}
+	return page, true
+}
+
+// Payload 返回管理员明确选中的一种已加密正文，避免详情页一次读取全部密文。
 func (h *ModelTraceHandler) Payload(c *gin.Context) {
 	if h == nil || h.queryService == nil {
 		response.InternalError(c, "Model trace query is unavailable")
@@ -107,7 +129,16 @@ func (h *ModelTraceHandler) Payload(c *gin.Context) {
 		}
 		attemptNo = parsed
 	}
-	payload, err := h.queryService.Payload(c.Request.Context(), c.Param("traceID"), modeltrace.PayloadKind(c.Param("kind")), attemptNo)
+	chunkNo := 0
+	if raw := strings.TrimSpace(c.Query("chunk_no")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			response.BadRequest(c, "Invalid chunk_no")
+			return
+		}
+		chunkNo = parsed
+	}
+	payload, err := h.queryService.PayloadPage(c.Request.Context(), c.Param("traceID"), modeltrace.PayloadKind(c.Param("kind")), attemptNo, chunkNo)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

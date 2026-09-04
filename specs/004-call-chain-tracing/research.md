@@ -28,9 +28,9 @@
   - Include body previews in the list: rejected by FR-008 and SC-006.
   - Bulk-decrypt every body in a trace: rejected because raw retry payloads can be large and are not needed for chat replay.
 
-## Decision: Retain full text but never credentials
+## Decision: Retain full encrypted body text without redaction
 
-- **Rationale**: The requested forensic value requires the complete text that was received/delivered. The existing sanitizer remains the mandatory boundary for credentials and non-text content; expiration bounds database growth.
+- **Rationale**: The requested forensic value requires the exact text that was received/delivered, and the administrator explicitly chose no body redaction. Authentication headers, cookies and route credentials are never captured as bodies; encryption, administrator authorization and expiration bound the remaining exposure.
 - **Alternatives considered**:
   - Keep the current fixed prefix-only limit for text: rejected because a partial prompt/response prevents the requested full replay.
   - Persist raw HTTP headers: rejected because headers carry API keys, tokens and cookies.

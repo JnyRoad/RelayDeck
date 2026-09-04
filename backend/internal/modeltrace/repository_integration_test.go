@@ -2,6 +2,7 @@ package modeltrace
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -67,4 +68,41 @@ func TestPostgresRepositoryPersistsHeadersAndPayloadMetadata(t *testing.T) {
 	require.Equal(t, 42, requestBytes)
 	require.Equal(t, 24, responseBytes)
 	require.Equal(t, "ciphertext-canary", ciphertext)
+}
+
+// TestPostgresRepositoryReadsBoundedChunkedPayloadPages verifies that a stored
+// chunk sequence returns four 256 KiB segments and a continuation cursor rather
+// than one unbounded ciphertext read.
+func TestPostgresRepositoryReadsBoundedChunkedPayloadPages(t *testing.T) {
+	db := openModelTraceIntegrationDB(t)
+	ctx := context.Background()
+	_, err := db.ExecContext(ctx, `TRUNCATE TABLE model_call_trace_cleanup_runs, model_call_payloads, model_call_trace_attempts, model_call_traces RESTART IDENTITY CASCADE`)
+	require.NoError(t, err)
+	repository := NewPostgresRepository(db)
+	createdAt := time.Now().UTC().Truncate(time.Microsecond)
+	require.NoError(t, repository.CreateTrace(ctx, TraceRecord{
+		TraceID: "trace-chunk-page-canary", Route: "/v1/responses", Protocol: "sync",
+		ExpiresAt: createdAt.AddDate(0, 0, 7), CreatedAt: createdAt,
+	}))
+	payloadID, err := repository.CreateChunkedPayload(ctx, PayloadRecord{
+		TraceID: "trace-chunk-page-canary", Kind: PayloadKindClientResponse, AttemptNo: 0,
+		CaptureStatus: CaptureStatusFailed, ContentType: "application/json", StorageMode: "chunked", CreatedAt: createdAt,
+	})
+	require.NoError(t, err)
+	for chunkNo := 0; chunkNo < 5; chunkNo++ {
+		require.NoError(t, repository.AppendPayloadChunk(ctx, payloadID, chunkNo, "ciphertext-chunk-"+string(rune('0'+chunkNo)), payloadChunkPlaintextBytes))
+	}
+	require.NoError(t, repository.FinishChunkedPayload(ctx, payloadID, PayloadRecord{
+		TraceID: "trace-chunk-page-canary", Kind: PayloadKindClientResponse, AttemptNo: 0,
+		CaptureStatus: CaptureStatusComplete, ContentType: "application/json", OriginalBytes: 5 * payloadChunkPlaintextBytes,
+		StoredBytes: 5 * payloadChunkPlaintextBytes, SHA256: strings.Repeat("a", 64), StorageMode: "chunked", CreatedAt: createdAt,
+	}))
+
+	page, err := repository.GetPayloadPage(ctx, "trace-chunk-page-canary", PayloadKindClientResponse, 0, 0, maxPayloadPagePlaintextBytes)
+
+	require.NoError(t, err)
+	require.Equal(t, "chunked", page.Payload.StorageMode)
+	require.Len(t, page.Ciphertexts, 4)
+	require.NotNil(t, page.NextChunkNo)
+	require.Equal(t, 4, *page.NextChunkNo)
 }

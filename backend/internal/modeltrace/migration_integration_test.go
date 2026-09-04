@@ -3,6 +3,7 @@ package modeltrace
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,12 +21,13 @@ const modelTracePostgresTestEnv = "MODEL_TRACE_TEST_POSTGRES_DSN"
 // to a developer or production database when the test DSN is absent.
 func openModelTraceIntegrationDB(t *testing.T) *sql.DB {
 	t.Helper()
-	migrations := make([][]byte, 0, 4)
+	migrations := make([][]byte, 0, 5)
 	for _, name := range []string{
 		"183_model_call_traces.sql",
 		"232_model_call_trace_sessions_and_attempts.sql",
 		"233_add_model_call_trace_indexes_notx.sql",
 		"234_validate_model_call_trace_constraints.sql",
+		"235_model_call_trace_payload_chunks.sql",
 	} {
 		migration, err := os.ReadFile(filepath.Join("..", "..", "migrations", name))
 		require.NoError(t, err)
@@ -122,6 +124,40 @@ func TestModelTraceMigrationCascadesPayloads(t *testing.T) {
 	require.Zero(t, payloadCount)
 }
 
+// TestModelTraceMigrationCascadesPayloadChunks verifies that retention cleanup
+// removes every encrypted chunk through the payload parent foreign key.
+func TestModelTraceMigrationCascadesPayloadChunks(t *testing.T) {
+	db := openModelTraceIntegrationDB(t)
+	ctx := context.Background()
+	_, err := db.ExecContext(ctx, `TRUNCATE TABLE model_call_trace_cleanup_runs, model_call_payloads, model_call_trace_attempts, model_call_traces RESTART IDENTITY CASCADE`)
+	require.NoError(t, err)
+
+	var traceID, payloadID int64
+	err = db.QueryRowContext(ctx, `
+		INSERT INTO model_call_traces (trace_id, route, protocol, outcome, expires_at)
+		VALUES ('trace-chunk-cascade-canary', '/v1/responses', 'sync', 'succeeded', NOW() + INTERVAL '7 days')
+		RETURNING id
+	`).Scan(&traceID)
+	require.NoError(t, err)
+	err = db.QueryRowContext(ctx, `
+		INSERT INTO model_call_payloads (model_call_trace_id, kind, attempt_no, capture_status, storage_mode, ciphertext)
+		VALUES ($1, 'client_response', 0, 'complete', 'chunked', '')
+		RETURNING id
+	`, traceID).Scan(&payloadID)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO model_call_payload_chunks (model_call_payload_id, chunk_no, stored_bytes, ciphertext)
+		VALUES ($1, 0, 32, 'encrypted-chunk-canary')
+	`, payloadID)
+	require.NoError(t, err)
+
+	_, err = db.ExecContext(ctx, `DELETE FROM model_call_traces WHERE id=$1`, traceID)
+	require.NoError(t, err)
+	var chunkCount int
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT COUNT(*) FROM model_call_payload_chunks WHERE model_call_payload_id=$1`, payloadID).Scan(&chunkCount))
+	require.Zero(t, chunkCount)
+}
+
 // TestPostgresRepositoryListsAndReadsDetails verifies that detail headers omit
 // ciphertext and the selected payload query reads only the requested body.
 func TestPostgresRepositoryListsAndReadsDetails(t *testing.T) {
@@ -160,6 +196,40 @@ func TestPostgresRepositoryListsAndReadsDetails(t *testing.T) {
 	payload, err := repository.GetPayload(ctx, "trace-query-canary", PayloadKindClientRequest, 0)
 	require.NoError(t, err)
 	require.Equal(t, "encrypted-query-canary", payload.Ciphertext)
+}
+
+// TestPostgresRepositoryPagesLongSessionConversation verifies that a 51-turn
+// explicit session returns a current-centered fifty-turn batch and reaches the
+// remaining turn only through the opaque older cursor.
+func TestPostgresRepositoryPagesLongSessionConversation(t *testing.T) {
+	db := openModelTraceIntegrationDB(t)
+	ctx := context.Background()
+	_, err := db.ExecContext(ctx, `TRUNCATE TABLE model_call_trace_cleanup_runs, model_call_payloads, model_call_trace_attempts, model_call_traces RESTART IDENTITY CASCADE`)
+	require.NoError(t, err)
+	repository := NewPostgresRepository(db)
+	createdAt := time.Date(2026, time.September, 4, 12, 0, 0, 0, time.UTC)
+	for index := 0; index < 51; index++ {
+		traceID := fmt.Sprintf("trace-session-page-%02d", index)
+		require.NoError(t, repository.CreateTrace(ctx, TraceRecord{
+			TraceID: traceID, Route: "/v1/responses", Protocol: "sync",
+			ExpiresAt: createdAt.AddDate(0, 0, 7), CreatedAt: createdAt.Add(time.Duration(index) * time.Minute),
+		}))
+		_, err = db.ExecContext(ctx, `UPDATE model_call_traces SET session_id='session-page-canary' WHERE trace_id=$1`, traceID)
+		require.NoError(t, err)
+	}
+
+	initial, err := repository.GetConversationPage(ctx, "trace-session-page-25", ConversationPageRequest{Limit: 50})
+
+	require.NoError(t, err)
+	require.Len(t, initial.Turns, 50)
+	require.Equal(t, "trace-session-page-25", initial.Turns[24].Trace.TraceID)
+	require.NotEmpty(t, initial.OlderCursor)
+	require.Empty(t, initial.NewerCursor)
+	older, err := repository.GetConversationPage(ctx, "trace-session-page-25", ConversationPageRequest{Direction: "older", Cursor: initial.OlderCursor, Limit: 50})
+	require.NoError(t, err)
+	require.Len(t, older.Turns, 1)
+	require.Equal(t, "trace-session-page-00", older.Turns[0].Trace.TraceID)
+	require.NotEmpty(t, older.NewerCursor)
 }
 
 // TestPostgresRepositoryPreviewsAndDeletesExpired 验证清理只命中 expires_at 已过期的调用，并汇总级联正文统计。

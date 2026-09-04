@@ -76,18 +76,36 @@
 
 **Checkpoint**: User Story 4 bounds storage by policy and has an explicit, quantified deletion confirmation.
 
-## Phase 7: Verification and convergence
+## Phase 7: Bounded full-content persistence and replay remediation
 
-- [ ] T027 Run focused backend tests and targeted migration integration tests from `backend/`, recording the exact commands and results in the implementation handoff.
-- [X] T028 Run focused Vitest tests, `frontend/node_modules/.bin/vue-tsc --noEmit`, scoped ESLint and `frontend/node_modules/.bin/vite build`.
-- [ ] T029 Perform the manual browser acceptance sequence in `specs/004-call-chain-tracing/quickstart.md` against the new local frontend port and a real database only after explicit runtime authorization.
-- [ ] T030 Re-run a Spec Kit consistency review and update unfinished tasks in `specs/004-call-chain-tracing/tasks.md` before reporting completion.
+**Purpose**: Preserve the approved full trace while bounding each gateway capture, administrator raw-body read and conversation page.
+
+- [X] T027 Add failing migration and repository tests for independently encrypted 256 KiB payload chunks, aggregate metadata and cascade cleanup in `backend/internal/modeltrace/migration_integration_test.go` and `backend/internal/modeltrace/repository_integration_test.go`.
+- [X] T028 Add `backend/migrations/235_model_call_trace_payload_chunks.sql` and extend `backend/internal/modeltrace/{recorder.go,repository.go,service.go}` with bounded chunk stream creation, ordered append and fail-closed finalization.
+- [X] T029 Add failing gateway/transport/WebSocket tests showing bodies larger than one chunk preserve every chunk without one unbounded capture buffer in `backend/internal/server/middleware/model_call_trace_test.go`, `backend/internal/modeltrace/upstream_attempt_test.go`, and `backend/internal/modeltrace/websocket_test.go`.
+- [X] T030 Replace unbounded client, upstream and WebSocket body aggregation with the chunk-stream observer in `backend/internal/server/middleware/model_call_trace.go` and `backend/internal/modeltrace/{upstream_attempt.go,websocket.go}`.
+- [X] T031 Add failing bounded conversation query tests for a 51-turn explicit session, current-turn anchoring, cursor direction and constant batch detail loading in `backend/internal/modeltrace/query_test.go` and `backend/internal/handler/admin/model_trace_handler_test.go`.
+- [X] T032 Implement `limit`/cursor conversation pages and batch detail hydration in `backend/internal/modeltrace/{query.go,query_repository.go}` and `backend/internal/handler/admin/model_trace_handler.go`.
+- [X] T033 Add failing bounded raw-body page tests for 1 MiB continuation and a complete multi-page result in `backend/internal/modeltrace/query_test.go` and `backend/internal/handler/admin/model_trace_handler_test.go`.
+- [X] T034 Implement chunk-page decrypt/query contracts in `backend/internal/modeltrace/{query.go,query_repository.go}` and `backend/internal/handler/admin/model_trace_handler.go`.
+- [X] T035 Add failing front-end tests for older/newer conversation continuation and sequential raw-body loading in `frontend/src/components/admin/usage/__tests__/ModelTraceDetailDialog.spec.ts`.
+- [X] T036 Implement user-controlled conversation continuation and raw-body continuation in `frontend/src/api/admin/modelTrace.ts` and `frontend/src/components/admin/usage/ModelTraceDetailDialog.vue`.
+- [X] T037 Run focused non-database backend, Vitest, type, lint and production-build checks; record isolated migration checks separately in this task list.
+
+**Checkpoint**: New full bodies are stored and read in bounded increments; reliable long conversations are replayed from bounded pages without losing any retained turn.
+
+## Phase 8: Verification and convergence
+
+- [ ] T038 Run focused backend tests and targeted migration integration tests from `backend/`, recording the exact commands and results in the implementation handoff.
+- [X] T039 Run focused Vitest tests, `frontend/node_modules/.bin/vue-tsc --noEmit`, scoped ESLint and `frontend/node_modules/.bin/vite build`.
+- [ ] T040 Perform the manual browser acceptance sequence in `specs/004-call-chain-tracing/quickstart.md` against the new local frontend port and a real database only after explicit runtime authorization.
+- [X] T041 Re-run a Spec Kit consistency review and update unfinished tasks in `specs/004-call-chain-tracing/tasks.md` before reporting completion.
 
 ### Verification notes
 
-- T027 remains open: focused package tests passed, but migration integration assertions were skipped because no isolated `MODEL_TRACE_TEST_POSTGRES_DSN` was configured; they must never be pointed at the live Docker database.
-- T029 remains open: the independent local frontend loaded at `127.0.0.1:15174`, but its browser session had no administrator login state. No real database migration, trace configuration change, or cleanup was attempted.
-- T030 remains open: this checkout has no `.specify/` prerequisite script, so the automated Spec Kit analyzer cannot run. A manual cross-read of `spec.md`, `plan.md`, `data-model.md`, API contract, and this task list found no new implementation contradiction; the two runtime-dependent items above remain explicitly unverified.
+- T038 remains open: focused package tests passed, but migration integration assertions were skipped because no isolated `MODEL_TRACE_TEST_POSTGRES_DSN` was configured; they must never be pointed at the live Docker database.
+- T040 remains open: the independent local frontend loaded at `127.0.0.1:15174`, but its browser session had no administrator login state. No real database migration, trace configuration change, or cleanup was attempted.
+- T041 completed manually: this checkout has no `.specify/` prerequisite script, so the automated Spec Kit analyzer cannot run. A cross-read of `spec.md`, `plan.md`, `data-model.md`, API contract, and this task list aligned the implementation with explicit user-controlled paging; the two runtime-dependent items above remain explicitly unverified.
 
 ## Dependencies and execution order
 
@@ -96,7 +114,7 @@
 - US2 (T013–T016) requires session foundation and can start after T006/T008; it does not depend on UI changes in US1 except shared types.
 - US3 (T017–T022) requires foundation and can proceed after T004/T008; it shares dialog work with US2, so T022 follows T016.
 - US4 (T023–T026) requires migration foundation but is otherwise independent of the first three stories.
-- T027–T030 require all selected implementation tasks.
+- T037–T041 require all selected implementation tasks.
 
 ## Parallel opportunities
 

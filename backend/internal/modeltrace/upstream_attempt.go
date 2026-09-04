@@ -152,10 +152,14 @@ func (a *UpstreamAttempt) WrapRequestBody(body io.ReadCloser) io.ReadCloser {
 		return body
 	}
 	if body == nil {
-		a.request = newUpstreamAttemptBodyCapture(nil)
+		a.request = newUpstreamAttemptBodyCapture(nil, a.startPayloadStream(context.Background(), PayloadInput{
+			Kind: PayloadKindUpstreamRequest, AttemptNo: a.input.AttemptNo,
+		}))
 		return nil
 	}
-	capture := newUpstreamAttemptBodyCapture(body)
+	capture := newUpstreamAttemptBodyCapture(body, a.startPayloadStream(context.Background(), PayloadInput{
+		Kind: PayloadKindUpstreamRequest, AttemptNo: a.input.AttemptNo,
+	}))
 	a.request = capture
 	return capture
 }
@@ -171,6 +175,11 @@ func (a *UpstreamAttempt) RecordRequest(ctx context.Context, contentType string)
 		if capture == nil {
 			capture = newUpstreamAttemptBodyCapture(nil)
 		}
+		if capture.stream != nil {
+			setAttemptPayloadStreamMetadata(capture.stream, PayloadKindUpstreamRequest, contentType)
+			_ = capture.stream.Close()
+			return
+		}
 		_ = a.observer.enqueue(ctx, func(persistCtx context.Context) error {
 			return a.observer.recorder.RecordPayload(persistCtx, a.observer.handle,
 				capture.Payload(PayloadKindUpstreamRequest, a.input.AttemptNo, contentType))
@@ -185,13 +194,17 @@ func (a *UpstreamAttempt) WrapResponseBody(ctx context.Context, body io.ReadClos
 		return body
 	}
 	if body == nil {
-		a.finishResponse(ctx, newUpstreamAttemptBodyCapture(nil), contentType, statusCode, "", "")
+		a.finishResponse(ctx, newUpstreamAttemptBodyCapture(nil, a.startPayloadStream(ctx, PayloadInput{
+			Kind: PayloadKindUpstreamResponse, AttemptNo: a.input.AttemptNo, ContentType: contentType,
+		})), contentType, statusCode, "", "")
 		return nil
 	}
 	return &upstreamAttemptResponseBody{
-		ReadCloser:  body,
-		attempt:     a,
-		capture:     newUpstreamAttemptBodyCapture(body),
+		ReadCloser: body,
+		attempt:    a,
+		capture: newUpstreamAttemptBodyCapture(body, a.startPayloadStream(ctx, PayloadInput{
+			Kind: PayloadKindUpstreamResponse, AttemptNo: a.input.AttemptNo, ContentType: contentType,
+		})),
 		context:     ctx,
 		contentType: contentType,
 		statusCode:  statusCode,
@@ -253,10 +266,15 @@ func (a *UpstreamAttempt) finishResponse(ctx context.Context, capture *upstreamA
 			errorStage = "response_read"
 			errorCode = "upstream_response_read_error"
 		}
-		_ = a.observer.enqueue(ctx, func(persistCtx context.Context) error {
-			return a.observer.recorder.RecordPayload(persistCtx, a.observer.handle,
-				capture.Payload(kind, a.input.AttemptNo, contentType))
-		})
+		if capture.stream != nil {
+			setAttemptPayloadStreamMetadata(capture.stream, kind, contentType)
+			_ = capture.stream.Close()
+		} else {
+			_ = a.observer.enqueue(ctx, func(persistCtx context.Context) error {
+				return a.observer.recorder.RecordPayload(persistCtx, a.observer.handle,
+					capture.Payload(kind, a.input.AttemptNo, contentType))
+			})
+		}
 		_ = a.observer.enqueue(ctx, func(persistCtx context.Context) error {
 			return a.observer.recorder.FinishUpstreamAttempt(persistCtx, a.observer.handle, UpstreamAttemptFinishInput{
 				AttemptNo:  a.input.AttemptNo,
@@ -317,23 +335,35 @@ func (b *upstreamAttemptResponseBody) Close() error {
 }
 
 // upstreamAttemptBodyCapture observes a body stream without changing its
-// return values. Full textual retention is bounded by trace expiry, not a
-// prefix limit; malformed/non-text content is still rejected by Service.
+// return values. It retains only a bounded fallback prefix while an optional
+// stream receives each consumed byte for fixed-memory chunk persistence.
 type upstreamAttemptBodyCapture struct {
 	io.ReadCloser
 	body       []byte
 	total      int64
 	digest     hashWriter
 	readFailed bool
+	limit      int
+	truncated  bool
+	stream     io.WriteCloser
 }
 
 // newUpstreamAttemptBodyCapture creates a transparent capture that forwards
 // reads and closes to the original stream without eagerly consuming it.
-func newUpstreamAttemptBodyCapture(body io.ReadCloser) *upstreamAttemptBodyCapture {
+func newUpstreamAttemptBodyCapture(body io.ReadCloser, streams ...io.WriteCloser) *upstreamAttemptBodyCapture {
 	if body == nil {
 		body = io.NopCloser(strings.NewReader(""))
 	}
-	return &upstreamAttemptBodyCapture{ReadCloser: body, digest: sha256.New()}
+	var stream io.WriteCloser
+	if len(streams) > 0 {
+		stream = streams[0]
+	}
+	return &upstreamAttemptBodyCapture{
+		ReadCloser: body,
+		digest:     sha256.New(),
+		limit:      DefaultPayloadLimitBytes,
+		stream:     stream,
+	}
 }
 
 // Read delegates to the original body before recording exactly the bytes it
@@ -357,15 +387,26 @@ func (c *upstreamAttemptBodyCapture) Record(body []byte, readErr error) {
 	if len(body) > 0 {
 		_, _ = c.digest.Write(body)
 		c.total += int64(len(body))
-		c.body = append(c.body, body...)
+		if c.stream != nil {
+			_, _ = c.stream.Write(body)
+		}
+		remaining := c.limit - len(c.body)
+		if remaining <= 0 {
+			c.truncated = true
+		} else if len(body) > remaining {
+			c.body = append(c.body, body[:remaining]...)
+			c.truncated = true
+		} else {
+			c.body = append(c.body, body...)
+		}
 	}
 	if readErr != nil && readErr != io.EOF {
 		c.readFailed = true
 	}
 }
 
-// Payload returns an immutable observation for the existing sanitizer and
-// encryptor pipeline without exposing the mutable capture buffer.
+// Payload returns an immutable observation for the encrypted persistence
+// pipeline without exposing the mutable capture buffer.
 func (c *upstreamAttemptBodyCapture) Payload(kind PayloadKind, attemptNo int, contentType string) PayloadInput {
 	if c == nil {
 		return PayloadInput{Kind: kind, AttemptNo: attemptNo, ContentType: contentType}
@@ -377,6 +418,34 @@ func (c *upstreamAttemptBodyCapture) Payload(kind PayloadKind, attemptNo int, co
 		Body:          append([]byte(nil), c.body...),
 		OriginalBytes: c.total,
 		SHA256:        hex.EncodeToString(c.digest.Sum(nil)),
+		Truncated:     c.truncated,
+	}
+}
+
+// startPayloadStream opens an optional root-bound stream for one upstream
+// body. A legacy recorder or storage setup simply receives the bounded fallback.
+func (a *UpstreamAttempt) startPayloadStream(ctx context.Context, input PayloadInput) io.WriteCloser {
+	if a == nil || a.observer == nil || a.observer.recorder == nil {
+		return nil
+	}
+	streamingRecorder, ok := a.observer.recorder.(PayloadStreamRecorder)
+	if !ok || streamingRecorder == nil {
+		return nil
+	}
+	return streamingRecorder.StartPayloadStream(ctx, a.observer.handle, input)
+}
+
+// setAttemptPayloadStreamMetadata applies response status/type information to
+// capable stream sinks after the shared transport knows the terminal outcome.
+func setAttemptPayloadStreamMetadata(stream io.WriteCloser, kind PayloadKind, contentType string) {
+	if stream == nil {
+		return
+	}
+	setter, ok := stream.(interface {
+		SetPayloadMetadata(PayloadKind, string)
+	})
+	if ok {
+		setter.SetPayloadMetadata(kind, contentType)
 	}
 }
 

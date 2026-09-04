@@ -7,6 +7,12 @@ import (
 	"time"
 )
 
+const (
+	maxConversationTurnPageSize     = 50
+	maxPayloadPagePlaintextBytes    = 1024 * 1024
+	defaultConversationTurnPageSize = maxConversationTurnPageSize
+)
+
 // TraceFilter 定义管理端列表可用的轻量索引筛选条件，不包含任何正文搜索字段。
 type TraceFilter struct {
 	TraceID        string
@@ -74,6 +80,8 @@ type TracePayload struct {
 	CreatedAt     time.Time     `json:"created_at"`
 	Content       string        `json:"content,omitempty"`
 	ContentStatus string        `json:"content_status"`
+	StorageMode   string        `json:"storage_mode"`
+	NextChunkNo   *int          `json:"next_chunk_no,omitempty"`
 	Ciphertext    string        `json:"-"`
 }
 
@@ -110,6 +118,17 @@ type TraceConversation struct {
 	Linked         bool          `json:"linked"`
 	LinkSource     string        `json:"link_source"`
 	Turns          []TraceDetail `json:"turns"`
+	OlderCursor    string        `json:"older_cursor,omitempty"`
+	NewerCursor    string        `json:"newer_cursor,omitempty"`
+}
+
+// ConversationPageRequest selects a chronological conversation window. The
+// initial request has no direction or cursor; follow-up requests must use the
+// opaque cursor returned for the requested side.
+type ConversationPageRequest struct {
+	Direction string
+	Cursor    string
+	Limit     int
 }
 
 // TraceQueryRepository 是查询索引和密文的只读存储边界。
@@ -125,7 +144,27 @@ type TraceConversationRepository interface {
 	GetConversation(ctx context.Context, traceID string) (TraceConversation, error)
 }
 
-// Decryptor 只在管理员查看单条详情时按需解开已脱敏的正文。
+// TraceConversationPageRepository is an optional capability for repositories
+// that can page a replay without materializing every linked trace in memory.
+type TraceConversationPageRepository interface {
+	GetConversationPage(ctx context.Context, traceID string, page ConversationPageRequest) (TraceConversation, error)
+}
+
+// TracePayloadPageRepository is an optional capability for repositories that
+// can return bounded encrypted body chunks instead of one full ciphertext.
+type TracePayloadPageRepository interface {
+	GetPayloadPage(ctx context.Context, traceID string, kind PayloadKind, attemptNo, chunkNo, maxPlaintextBytes int) (TracePayloadPage, error)
+}
+
+// TracePayloadPage keeps one payload header separate from the ciphertext
+// segments required for the requested bounded plaintext page.
+type TracePayloadPage struct {
+	Payload     TracePayload
+	Ciphertexts []string
+	NextChunkNo *int
+}
+
+// Decryptor 只在管理员查看单条详情时按需解开已加密的正文。
 type Decryptor interface {
 	Decrypt(ciphertext string) (string, error)
 }
@@ -177,9 +216,16 @@ func (s *QueryService) Detail(ctx context.Context, traceID string) (TraceDetail,
 	return detail, nil
 }
 
-// Conversation returns only the repository-proven replay turns and leaves all
-// payload ciphertext unread until the administrator selects an individual body.
+// Conversation returns the initial centered replay page and leaves all payload
+// ciphertext unread until the administrator selects an individual body.
 func (s *QueryService) Conversation(ctx context.Context, traceID string) (TraceConversation, error) {
+	return s.ConversationPage(ctx, traceID, ConversationPageRequest{})
+}
+
+// ConversationPage returns one bounded protocol-confirmed replay window. It
+// delegates cursor semantics to capable repositories and never lets a legacy
+// repository turn one response into an unbounded history read.
+func (s *QueryService) ConversationPage(ctx context.Context, traceID string, page ConversationPageRequest) (TraceConversation, error) {
 	if s == nil || s.repository == nil {
 		return TraceConversation{}, fmt.Errorf("model trace query repository is unavailable")
 	}
@@ -187,11 +233,11 @@ func (s *QueryService) Conversation(ctx context.Context, traceID string) (TraceC
 	if traceID == "" {
 		return TraceConversation{}, fmt.Errorf("model trace id is required")
 	}
-	repository, ok := s.repository.(TraceConversationRepository)
-	if !ok {
-		return TraceConversation{}, fmt.Errorf("model trace conversation query is unavailable")
+	normalizedPage, err := normalizeConversationPageRequest(page)
+	if err != nil {
+		return TraceConversation{}, err
 	}
-	conversation, err := repository.GetConversation(ctx, traceID)
+	conversation, err := s.readConversationPage(ctx, traceID, normalizedPage)
 	if err != nil {
 		return TraceConversation{}, err
 	}
@@ -202,12 +248,61 @@ func (s *QueryService) Conversation(ctx context.Context, traceID string) (TraceC
 			payload.Ciphertext = ""
 		}
 	}
+	if len(conversation.Turns) > normalizedPage.Limit {
+		conversation.Turns = conversation.Turns[:normalizedPage.Limit]
+	}
 	return conversation, nil
 }
 
-// Payload decrypts exactly one administrator-selected payload after the
-// detail header has already identified its kind and attempt number.
+// readConversationPage chooses the paged repository capability when present.
+// Legacy repositories remain usable only for the initial page because they
+// cannot honor a cursor without repeating or omitting replay turns.
+func (s *QueryService) readConversationPage(ctx context.Context, traceID string, page ConversationPageRequest) (TraceConversation, error) {
+	if repository, ok := s.repository.(TraceConversationPageRepository); ok {
+		return repository.GetConversationPage(ctx, traceID, page)
+	}
+	if page.Direction != "" || page.Cursor != "" {
+		return TraceConversation{}, fmt.Errorf("model trace conversation paging is unavailable")
+	}
+	repository, ok := s.repository.(TraceConversationRepository)
+	if !ok {
+		return TraceConversation{}, fmt.Errorf("model trace conversation query is unavailable")
+	}
+	return repository.GetConversation(ctx, traceID)
+}
+
+// normalizeConversationPageRequest validates public cursor inputs and applies
+// the fixed maximum that protects both the database batch and browser replay.
+func normalizeConversationPageRequest(page ConversationPageRequest) (ConversationPageRequest, error) {
+	page.Direction = strings.TrimSpace(page.Direction)
+	page.Cursor = strings.TrimSpace(page.Cursor)
+	if page.Direction != "" && page.Direction != "older" && page.Direction != "newer" {
+		return ConversationPageRequest{}, fmt.Errorf("model trace conversation direction is invalid")
+	}
+	if page.Direction == "" && page.Cursor != "" {
+		return ConversationPageRequest{}, fmt.Errorf("model trace conversation cursor direction is required")
+	}
+	if page.Direction != "" && page.Cursor == "" {
+		return ConversationPageRequest{}, fmt.Errorf("model trace conversation cursor is required")
+	}
+	if page.Limit < 1 {
+		page.Limit = defaultConversationTurnPageSize
+	}
+	if page.Limit > maxConversationTurnPageSize {
+		page.Limit = maxConversationTurnPageSize
+	}
+	return page, nil
+}
+
+// Payload returns the first bounded page of one administrator-selected body.
+// Callers with a continuation cursor must use PayloadPage instead.
 func (s *QueryService) Payload(ctx context.Context, traceID string, kind PayloadKind, attemptNo int) (TracePayload, error) {
+	return s.PayloadPage(ctx, traceID, kind, attemptNo, 0)
+}
+
+// PayloadPage decrypts exactly one selected bounded body page after the detail
+// header identified its kind and attempt number; it never reads sibling bodies.
+func (s *QueryService) PayloadPage(ctx context.Context, traceID string, kind PayloadKind, attemptNo, chunkNo int) (TracePayload, error) {
 	if s == nil || s.repository == nil {
 		return TracePayload{}, fmt.Errorf("model trace query repository is unavailable")
 	}
@@ -218,15 +313,34 @@ func (s *QueryService) Payload(ctx context.Context, traceID string, kind Payload
 	if !isReadablePayloadKind(kind) {
 		return TracePayload{}, fmt.Errorf("model trace payload kind is invalid")
 	}
-	if attemptNo < 0 {
+	if attemptNo < 0 || chunkNo < 0 {
 		return TracePayload{}, fmt.Errorf("model trace payload attempt number is invalid")
+	}
+	if repository, ok := s.repository.(TracePayloadPageRepository); ok {
+		page, err := repository.GetPayloadPage(ctx, traceID, kind, attemptNo, chunkNo, maxPayloadPagePlaintextBytes)
+		if err != nil {
+			return TracePayload{}, err
+		}
+		return s.decryptPayloadPage(page)
+	}
+	if chunkNo != 0 {
+		return TracePayload{}, fmt.Errorf("model trace payload paging is unavailable")
 	}
 	payload, err := s.repository.GetPayload(ctx, traceID, kind, attemptNo)
 	if err != nil {
 		return TracePayload{}, err
 	}
+	return s.decryptPayloadPage(TracePayloadPage{Payload: payload, Ciphertexts: []string{payload.Ciphertext}})
+}
+
+// decryptPayloadPage turns only the repository-selected ciphertext segments
+// into one bounded plaintext response and suppresses all decryptor failures.
+func (s *QueryService) decryptPayloadPage(page TracePayloadPage) (TracePayload, error) {
+	payload := page.Payload
 	payload.ContentStatus = payloadContentStatus(payload)
-	if payload.Ciphertext == "" {
+	payload.NextChunkNo = page.NextChunkNo
+	if len(page.Ciphertexts) == 0 || payload.ContentStatus != "available" {
+		payload.Ciphertext = ""
 		return payload, nil
 	}
 	if s.decryptor == nil {
@@ -234,13 +348,21 @@ func (s *QueryService) Payload(ctx context.Context, traceID string, kind Payload
 		payload.ContentStatus = "unavailable"
 		return payload, nil
 	}
-	content, decryptErr := s.decryptor.Decrypt(payload.Ciphertext)
-	payload.Ciphertext = ""
-	if decryptErr != nil {
-		payload.ContentStatus = "unavailable"
-		return payload, nil
+	var content strings.Builder
+	for _, ciphertext := range page.Ciphertexts {
+		if ciphertext == "" {
+			continue
+		}
+		plaintext, decryptErr := s.decryptor.Decrypt(ciphertext)
+		if decryptErr != nil || content.Len()+len(plaintext) > maxPayloadPagePlaintextBytes {
+			payload.Ciphertext = ""
+			payload.ContentStatus = "unavailable"
+			return payload, nil
+		}
+		content.WriteString(plaintext)
 	}
-	payload.Content = content
+	payload.Ciphertext = ""
+	payload.Content = content.String()
 	payload.ContentStatus = "available"
 	return payload, nil
 }

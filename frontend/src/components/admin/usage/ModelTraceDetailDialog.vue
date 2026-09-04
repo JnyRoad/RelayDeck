@@ -27,14 +27,20 @@
       <p v-else-if="errorMessage" class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">{{ errorMessage }}</p>
 
       <section v-else-if="conversation && activeView === 'chat'" data-testid="model-trace-chat-scroll" class="trace-chat-scroll max-h-[calc(100vh-20rem)] min-h-[24rem] space-y-5 overflow-y-auto rounded-xl border border-slate-200 bg-[radial-gradient(circle_at_top,_rgba(20,184,166,0.09),transparent_28rem)] p-4 dark:border-dark-700 dark:bg-dark-900">
+        <div v-if="conversation.older_cursor" class="flex justify-center">
+          <button data-testid="model-trace-load-older" type="button" class="trace-load-more" :disabled="loadingConversationPage" @click="loadConversationPage('older')">{{ t('admin.modelTrace.detail.loadOlder') }}</button>
+        </div>
         <article v-for="turn in conversation.turns" :key="turn.trace.trace_id" :data-testid="`trace-chat-turn-${turn.trace.trace_id}`" :class="['trace-chat-turn space-y-3 rounded-xl border p-3', turn.trace.trace_id === conversation.current_trace_id ? 'trace-current-turn border-teal-400/70 bg-teal-50/70 ring-1 ring-teal-200 dark:border-teal-700 dark:bg-teal-950/20 dark:ring-teal-900' : 'border-transparent bg-white/70 dark:bg-dark-800/70']">
           <div class="flex items-center justify-between gap-3 text-xs text-slate-500 dark:text-slate-400">
             <span class="font-mono">{{ turn.trace.trace_id }}</span>
             <span v-if="turn.trace.trace_id === conversation.current_trace_id" class="rounded bg-teal-600 px-1.5 py-0.5 font-medium text-white">{{ t('admin.modelTrace.detail.currentTurn') }}</span>
           </div>
-          <TraceBubble :label="t('admin.modelTrace.detail.user')" :trace-id="turn.trace.trace_id" :payload="findPayload(turn, 'client_request')" :load-failed="payloadLoadFailed(turn.trace.trace_id, findPayload(turn, 'client_request'))" align="right" @copy="copyPayload(turn.trace.trace_id, $event)" />
-          <TraceBubble :label="t('admin.modelTrace.detail.model')" :trace-id="turn.trace.trace_id" :payload="findReplyPayload(turn)" :load-failed="payloadLoadFailed(turn.trace.trace_id, findReplyPayload(turn))" align="left" @copy="copyPayload(turn.trace.trace_id, $event)" />
+          <TraceBubble :label="t('admin.modelTrace.detail.user')" :trace-id="turn.trace.trace_id" :payload="findPayload(turn, 'client_request')" :load-failed="payloadLoadFailed(turn.trace.trace_id, findPayload(turn, 'client_request'))" :has-more="payloadHasMore(turn.trace.trace_id, findPayload(turn, 'client_request'))" align="right" @load="loadPayload(turn.trace.trace_id, $event)" @load-more="loadMorePayload(turn.trace.trace_id, $event)" @copy="copyPayload(turn.trace.trace_id, $event)" />
+          <TraceBubble :label="t('admin.modelTrace.detail.model')" :trace-id="turn.trace.trace_id" :payload="findReplyPayload(turn)" :load-failed="payloadLoadFailed(turn.trace.trace_id, findReplyPayload(turn))" :has-more="payloadHasMore(turn.trace.trace_id, findReplyPayload(turn))" align="left" @load="loadPayload(turn.trace.trace_id, $event)" @load-more="loadMorePayload(turn.trace.trace_id, $event)" @copy="copyPayload(turn.trace.trace_id, $event)" />
         </article>
+        <div v-if="conversation.newer_cursor" class="flex justify-center">
+          <button data-testid="model-trace-load-newer" type="button" class="trace-load-more" :disabled="loadingConversationPage" @click="loadConversationPage('newer')">{{ t('admin.modelTrace.detail.loadNewer') }}</button>
+        </div>
       </section>
 
       <section v-else-if="conversation" class="max-h-[calc(100vh-20rem)] min-h-[24rem] space-y-3 overflow-y-auto rounded-xl border border-slate-200 bg-slate-950 p-4 font-mono text-xs text-slate-100 dark:border-dark-700" data-testid="model-trace-raw-chain">
@@ -42,16 +48,16 @@
           <div class="rounded-lg border border-slate-700 bg-slate-900/80 p-3 text-slate-300">
             <p>{{ currentTurn.trace.route }} · {{ currentTurn.trace.requested_model || currentTurn.trace.response_model || '—' }}</p>
           </div>
-          <TraceRawPayload v-for="payload in rootClientRequestPayloads" :key="payloadKey(currentTurn.trace.trace_id, payload)" :payload="payload" :content="payloadContent(currentTurn.trace.trace_id, payload)" :load-failed="payloadLoadFailed(currentTurn.trace.trace_id, payload)" @load="loadPayload(currentTurn.trace.trace_id, payload)" @copy="copyPayload(currentTurn.trace.trace_id, payload)" />
+          <TraceRawPayload v-for="payload in rootClientRequestPayloads" :key="payloadKey(currentTurn.trace.trace_id, payload)" :payload="payload" :content="payloadContent(currentTurn.trace.trace_id, payload)" :load-failed="payloadLoadFailed(currentTurn.trace.trace_id, payload)" :has-more="payloadHasMore(currentTurn.trace.trace_id, payload)" @load="loadPayload(currentTurn.trace.trace_id, payload)" @load-more="loadMorePayload(currentTurn.trace.trace_id, payload)" @copy="copyPayload(currentTurn.trace.trace_id, payload)" />
           <article v-for="attempt in currentTurn.attempts" :key="attempt.attempt_no" class="rounded-lg border border-slate-700 bg-slate-900/70 p-3">
             <div class="mb-2 flex flex-wrap items-center justify-between gap-2 text-slate-300">
               <span>{{ t('admin.modelTrace.detail.attempt', { number: attempt.attempt_no }) }} · {{ attempt.outcome }} · {{ attempt.status_code ?? '—' }}</span>
               <span>{{ attempt.account_snapshot || '—' }} · {{ attempt.upstream_model || '—' }}</span>
             </div>
             <p class="mb-3 break-all text-slate-500">{{ attempt.upstream_route || '—' }}</p>
-            <TraceRawPayload v-for="payload in attemptPayloads(attempt.attempt_no)" :key="payloadKey(currentTurn.trace.trace_id, payload)" :payload="payload" :content="payloadContent(currentTurn.trace.trace_id, payload)" :load-failed="payloadLoadFailed(currentTurn.trace.trace_id, payload)" @load="loadPayload(currentTurn.trace.trace_id, payload)" @copy="copyPayload(currentTurn.trace.trace_id, payload)" />
+            <TraceRawPayload v-for="payload in attemptPayloads(attempt.attempt_no)" :key="payloadKey(currentTurn.trace.trace_id, payload)" :payload="payload" :content="payloadContent(currentTurn.trace.trace_id, payload)" :load-failed="payloadLoadFailed(currentTurn.trace.trace_id, payload)" :has-more="payloadHasMore(currentTurn.trace.trace_id, payload)" @load="loadPayload(currentTurn.trace.trace_id, payload)" @load-more="loadMorePayload(currentTurn.trace.trace_id, payload)" @copy="copyPayload(currentTurn.trace.trace_id, payload)" />
           </article>
-          <TraceRawPayload v-for="payload in rootClientResultPayloads" :key="payloadKey(currentTurn.trace.trace_id, payload)" :payload="payload" :content="payloadContent(currentTurn.trace.trace_id, payload)" :load-failed="payloadLoadFailed(currentTurn.trace.trace_id, payload)" @load="loadPayload(currentTurn.trace.trace_id, payload)" @copy="copyPayload(currentTurn.trace.trace_id, payload)" />
+          <TraceRawPayload v-for="payload in rootClientResultPayloads" :key="payloadKey(currentTurn.trace.trace_id, payload)" :payload="payload" :content="payloadContent(currentTurn.trace.trace_id, payload)" :load-failed="payloadLoadFailed(currentTurn.trace.trace_id, payload)" :has-more="payloadHasMore(currentTurn.trace.trace_id, payload)" @load="loadPayload(currentTurn.trace.trace_id, payload)" @load-more="loadMorePayload(currentTurn.trace.trace_id, payload)" @copy="copyPayload(currentTurn.trace.trace_id, payload)" />
         </template>
       </section>
     </div>
@@ -75,6 +81,7 @@ const errorMessage = ref('')
 const activeView = ref<'chat' | 'raw'>('chat')
 const contents = ref<Record<string, ModelTracePayload>>({})
 const payloadErrorKeys = ref<Record<string, true>>({})
+const loadingConversationPage = ref(false)
 let loadVersion = 0
 
 /** Derive a stable browser-only lookup key for one selected trace payload. */
@@ -99,6 +106,9 @@ const attemptPayloads = (attemptNo: number) => currentTurn.value?.payloads.filte
 /** Read a previously selected body without mutating metadata returned by list/detail APIs. */
 const payloadContent = (traceID: string, payload: ModelTracePayload) => contents.value[payloadKey(traceID, payload)]?.content || ''
 
+/** Confirm that the loaded portion of one payload has an explicit next chunk. */
+const payloadHasMore = (traceID: string, payload?: ModelTracePayload) => Boolean(payload && contents.value[payloadKey(traceID, payload)]?.next_chunk_no !== undefined)
+
 /** Keep a lazy-load failure local to its body so the rest of the replay remains visible. */
 const payloadLoadFailed = (traceID: string, payload?: ModelTracePayload) => Boolean(payload && payloadErrorKeys.value[payloadKey(traceID, payload)])
 
@@ -121,7 +131,61 @@ const loadPayload = async (traceID: string, payload?: ModelTracePayload, expecte
   }
 }
 
-/** Load the exact protocol-confirmed replay and then only client chat bodies. */
+/** Append one server-selected payload page while retaining the loaded prefix. */
+const loadMorePayload = async (traceID: string, payload?: ModelTracePayload, expectedVersion = loadVersion) => {
+  if (!payload) return
+  const key = payloadKey(traceID, payload)
+  const existing = contents.value[key]
+  const chunkNo = existing?.next_chunk_no
+  if (chunkNo === undefined) return
+  try {
+    const loaded = await modelTraceAPI.getPayload(traceID, payload.kind, payload.attempt_no, chunkNo)
+    if (expectedVersion !== loadVersion) return
+    contents.value = {
+      ...contents.value,
+      [key]: { ...loaded, content: `${existing.content || ''}${loaded.content || ''}` },
+    }
+  } catch {
+    if (expectedVersion === loadVersion) payloadErrorKeys.value = { ...payloadErrorKeys.value, [key]: true }
+  }
+}
+
+/** Merge one chronological server page without duplicating a retained boundary turn. */
+const mergeConversationTurns = (existing: ModelTraceDetail[], incoming: ModelTraceDetail[], direction: 'older' | 'newer') => {
+  const merged = direction === 'older' ? [...incoming, ...existing] : [...existing, ...incoming]
+  const seen = new Set<string>()
+  return merged.filter((turn) => {
+    if (seen.has(turn.trace.trace_id)) return false
+    seen.add(turn.trace.trace_id)
+    return true
+  })
+}
+
+/** Request the adjacent conversation page using only the server-issued cursor. */
+const loadConversationPage = async (direction: 'older' | 'newer') => {
+  if (!props.traceId || !conversation.value || loadingConversationPage.value) return
+  const current = conversation.value
+  const cursor = direction === 'older' ? current.older_cursor : current.newer_cursor
+  if (!cursor) return
+  const version = loadVersion
+  loadingConversationPage.value = true
+  try {
+    const result = await modelTraceAPI.getConversation(props.traceId, { direction, cursor, limit: 50 })
+    if (version !== loadVersion || !conversation.value) return
+    conversation.value = {
+      ...conversation.value,
+      turns: mergeConversationTurns(conversation.value.turns, result.turns, direction),
+      older_cursor: direction === 'older' ? result.older_cursor : conversation.value.older_cursor,
+      newer_cursor: direction === 'newer' ? result.newer_cursor : conversation.value.newer_cursor,
+    }
+  } catch {
+    if (version === loadVersion) errorMessage.value = t('admin.modelTrace.errors.detail')
+  } finally {
+    if (version === loadVersion) loadingConversationPage.value = false
+  }
+}
+
+/** Load the exact protocol-confirmed replay and only the current turn's chat bodies. */
 const loadConversation = async () => {
   if (!props.show || !props.traceId) return
   const version = ++loadVersion
@@ -130,15 +194,19 @@ const loadConversation = async () => {
   conversation.value = null
   contents.value = {}
   payloadErrorKeys.value = {}
+  loadingConversationPage.value = false
   activeView.value = 'chat'
   try {
     const result = await modelTraceAPI.getConversation(props.traceId)
     if (version !== loadVersion) return
     conversation.value = result
-    await Promise.all(result.turns.flatMap((turn) => [
-      loadPayload(turn.trace.trace_id, findPayload(turn, 'client_request'), version),
-      loadPayload(turn.trace.trace_id, findReplyPayload(turn), version),
-    ]))
+    const current = result.turns.find((turn) => turn.trace.trace_id === result.current_trace_id)
+    if (current) {
+      await Promise.all([
+        loadPayload(current.trace.trace_id, findPayload(current, 'client_request'), version),
+        loadPayload(current.trace.trace_id, findReplyPayload(current), version),
+      ])
+    }
   } catch {
     if (version === loadVersion) errorMessage.value = t('admin.modelTrace.errors.detail')
   } finally {
@@ -165,6 +233,7 @@ const close = () => {
   conversation.value = null
   contents.value = {}
   payloadErrorKeys.value = {}
+  loadingConversationPage.value = false
   emit('close')
 }
 
@@ -179,9 +248,10 @@ const TraceBubble = defineComponent({
     traceId: { type: String, required: true },
     payload: { type: Object as PropType<ModelTracePayload | undefined>, default: undefined },
     loadFailed: { type: Boolean, default: false },
+    hasMore: { type: Boolean, default: false },
     align: { type: String as PropType<'left' | 'right'>, required: true },
   },
-  emits: ['copy'],
+  emits: ['copy', 'load', 'load-more'],
   setup(componentProps, { emit }) {
     return () => h('section', { class: componentProps.align === 'right' ? 'ml-auto max-w-[92%]' : 'mr-auto max-w-[92%]' }, [
       h('p', { class: 'mb-1 px-1 text-xs font-medium text-slate-500 dark:text-slate-400' }, componentProps.label),
@@ -192,9 +262,14 @@ const TraceBubble = defineComponent({
               || (componentProps.loadFailed
                 ? t('admin.modelTrace.errors.detail')
                 : componentProps.payload.content_status === 'available'
-                ? t('admin.modelTrace.detail.loadingBody')
+                ? t('admin.modelTrace.detail.loadBody')
                 : t('admin.modelTrace.detail.contentUnavailable', { status: componentProps.payload.content_status }))),
-            payloadContent(componentProps.traceId, componentProps.payload) ? h('button', { type: 'button', class: 'text-xs underline underline-offset-2 opacity-80 hover:opacity-100', onClick: () => emit('copy', componentProps.payload) }, t('common.copy')) : null,
+            payloadContent(componentProps.traceId, componentProps.payload) ? h('div', { class: 'flex gap-3' }, [
+              componentProps.hasMore ? null : h('button', { type: 'button', class: 'text-xs underline underline-offset-2 opacity-80 hover:opacity-100', onClick: () => emit('copy', componentProps.payload) }, t('common.copy')),
+              componentProps.hasMore ? h('button', { type: 'button', 'data-testid': 'model-trace-load-more-payload', class: 'text-xs underline underline-offset-2 opacity-80 hover:opacity-100', onClick: () => emit('load-more', componentProps.payload) }, t('admin.modelTrace.detail.loadMoreBody')) : null,
+            ]) : componentProps.payload.content_status === 'available'
+              ? h('button', { type: 'button', class: 'text-xs underline underline-offset-2 opacity-80 hover:opacity-100', onClick: () => emit('load', componentProps.payload) }, t('admin.modelTrace.detail.loadBody'))
+              : null,
           ])
           : h('p', { class: 'italic opacity-70' }, t('admin.modelTrace.detail.contentUnavailable', { status: 'not_captured' })),
       ]),
@@ -208,14 +283,18 @@ const TraceRawPayload = defineComponent({
     payload: { type: Object as PropType<ModelTracePayload>, required: true },
     content: { type: String, default: '' },
     loadFailed: { type: Boolean, default: false },
+    hasMore: { type: Boolean, default: false },
   },
-  emits: ['load', 'copy'],
+  emits: ['load', 'load-more', 'copy'],
   setup(componentProps, { emit }) {
     return () => h('section', { class: 'mb-3 rounded-md border border-slate-700 bg-slate-950/70 p-3' }, [
       h('div', { class: 'mb-2 flex flex-wrap items-center justify-between gap-2 text-slate-400' }, [
         h('span', `${componentProps.payload.kind} · ${componentProps.payload.content_type || 'text/plain'}`),
         componentProps.content
-          ? h('button', { type: 'button', class: 'text-teal-300 underline underline-offset-2', onClick: () => emit('copy', componentProps.payload) }, t('common.copy'))
+          ? h('div', { class: 'flex gap-3' }, [
+              componentProps.hasMore ? null : h('button', { type: 'button', class: 'text-teal-300 underline underline-offset-2', onClick: () => emit('copy', componentProps.payload) }, t('common.copy')),
+              componentProps.hasMore ? h('button', { type: 'button', 'data-testid': 'model-trace-load-more-payload', class: 'text-teal-300 underline underline-offset-2', onClick: () => emit('load-more', componentProps.payload) }, t('admin.modelTrace.detail.loadMoreBody')) : null,
+            ])
           : h('button', { type: 'button', class: 'text-teal-300 underline underline-offset-2 disabled:opacity-50', disabled: componentProps.payload.content_status !== 'available', onClick: () => emit('load', componentProps.payload) }, t('admin.modelTrace.detail.loadBody')),
       ]),
       h('p', { class: 'mb-2 break-all text-[11px] leading-4 text-slate-500', 'data-testid': 'model-trace-payload-metadata' }, t('admin.modelTrace.detail.payloadMetadata', {
@@ -240,4 +319,5 @@ const TraceRawPayload = defineComponent({
 .trace-view-tab { @apply -mb-px border-b-2 border-transparent px-3 py-2 text-sm font-medium text-slate-500 transition-colors hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100; }
 .trace-view-tab-active { @apply border-teal-500 text-teal-700 dark:text-teal-300; }
 .trace-chat-scroll { scrollbar-color: rgba(13, 148, 136, 0.55) transparent; }
+.trace-load-more { @apply rounded-full border border-teal-200 bg-white px-3 py-1.5 text-xs font-medium text-teal-700 shadow-sm transition-colors hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-teal-800 dark:bg-dark-800 dark:text-teal-300 dark:hover:bg-teal-950/40; }
 </style>

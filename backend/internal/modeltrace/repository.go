@@ -62,6 +62,97 @@ func (r *PostgresRepository) CreatePayload(ctx context.Context, record PayloadRe
 	if affected != 1 {
 		return fmt.Errorf("model trace %q not found", record.TraceID)
 	}
+	return r.updatePayloadCaptureStatus(ctx, record)
+}
+
+// CreateChunkedPayload creates a fail-closed metadata row before any encrypted
+// chunk is appended. The returned database ID remains internal to the storage
+// adapter and is never exposed to gateway callers.
+func (r *PostgresRepository) CreateChunkedPayload(ctx context.Context, record PayloadRecord) (int64, error) {
+	if r == nil || r.db == nil {
+		return 0, fmt.Errorf("model trace database is unavailable")
+	}
+	var payloadID int64
+	err := r.db.QueryRowContext(ctx, `
+		INSERT INTO model_call_payloads (
+			model_call_trace_id, kind, attempt_no, capture_status, mime_type, original_bytes,
+			stored_bytes, sha256, redaction_version, storage_mode, ciphertext, created_at
+		)
+		SELECT id, $2, $3, $4, $5, $6, $7, $8, $9, 'chunked', '', $10
+		FROM model_call_traces
+		WHERE trace_id=$1
+		RETURNING id
+	`, record.TraceID, string(record.Kind), record.AttemptNo, string(record.CaptureStatus), record.ContentType,
+		record.OriginalBytes, record.StoredBytes, record.SHA256, record.RedactionVer, record.CreatedAt).Scan(&payloadID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return 0, fmt.Errorf("model trace %q not found", record.TraceID)
+		}
+		return 0, fmt.Errorf("insert chunked model trace payload: %w", err)
+	}
+	if err := r.updatePayloadCaptureStatus(ctx, record); err != nil {
+		return 0, err
+	}
+	return payloadID, nil
+}
+
+// AppendPayloadChunk persists one already-encrypted plaintext segment in its
+// immutable ordinal sequence. Callers must not retry a different value at the
+// same chunk number because the table enforces unique ordering.
+func (r *PostgresRepository) AppendPayloadChunk(ctx context.Context, payloadID int64, chunkNo int, ciphertext string, storedBytes int64) error {
+	if r == nil || r.db == nil {
+		return fmt.Errorf("model trace database is unavailable")
+	}
+	if payloadID < 1 || chunkNo < 0 || storedBytes < 0 {
+		return fmt.Errorf("model trace payload chunk is invalid")
+	}
+	if _, err := r.db.ExecContext(ctx, `
+		INSERT INTO model_call_payload_chunks (model_call_payload_id, chunk_no, stored_bytes, ciphertext)
+		VALUES ($1, $2, $3, $4)
+	`, payloadID, chunkNo, storedBytes, ciphertext); err != nil {
+		return fmt.Errorf("insert model trace payload chunk: %w", err)
+	}
+	return nil
+}
+
+// FinishChunkedPayload marks aggregate metadata readable after its chunks exist,
+// then updates the root summary status without reading any body.
+func (r *PostgresRepository) FinishChunkedPayload(ctx context.Context, payloadID int64, record PayloadRecord) error {
+	if r == nil || r.db == nil {
+		return fmt.Errorf("model trace database is unavailable")
+	}
+	if payloadID < 1 {
+		return fmt.Errorf("model trace payload ID is invalid")
+	}
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE model_call_payloads
+		SET kind=$2,
+			capture_status=$3,
+			mime_type=$4,
+			original_bytes=$5,
+			stored_bytes=$6,
+			sha256=$7,
+			redaction_version=$8,
+			storage_mode='chunked'
+		WHERE id=$1
+	`, payloadID, string(record.Kind), string(record.CaptureStatus), record.ContentType,
+		record.OriginalBytes, record.StoredBytes, record.SHA256, record.RedactionVer)
+	if err != nil {
+		return fmt.Errorf("finish chunked model trace payload: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read chunked model trace payload update result: %w", err)
+	}
+	if affected != 1 {
+		return fmt.Errorf("model trace payload %d not found", payloadID)
+	}
+	return r.updatePayloadCaptureStatus(ctx, record)
+}
+
+// updatePayloadCaptureStatus keeps the list-visible root capture fields in
+// sync with one persisted payload without ever loading its ciphertext.
+func (r *PostgresRepository) updatePayloadCaptureStatus(ctx context.Context, record PayloadRecord) error {
 	if column := captureStatusColumn(record.Kind); column != "" {
 		updates := []string{column + "=$2"}
 		arguments := []any{record.TraceID, string(record.CaptureStatus)}

@@ -25,7 +25,7 @@ type ConfigStore interface {
 	Load(ctx context.Context) (TraceConfig, error)
 }
 
-// Encryptor protects already-sanitized bodies before they reach persistent storage.
+// Encryptor protects selected trace bodies before they reach persistent storage.
 type Encryptor interface {
 	Encrypt(plaintext string) (string, error)
 }
@@ -51,6 +51,7 @@ type PayloadRecord struct {
 	StoredBytes   int64
 	SHA256        string
 	RedactionVer  int16
+	StorageMode   string
 	Ciphertext    string
 	Model         string
 	CreatedAt     time.Time
@@ -95,6 +96,17 @@ type TraceAttemptFinishRecord struct {
 type AttemptRepository interface {
 	CreateAttempt(ctx context.Context, record TraceAttemptRecord) error
 	FinishAttempt(ctx context.Context, record TraceAttemptFinishRecord) error
+}
+
+const payloadChunkPlaintextBytes = 256 * 1024
+
+// ChunkedPayloadRepository persists one payload header and independently
+// encrypted fixed-size body chunks. A new header starts failed and is promoted
+// only after every chunk and aggregate value has been committed.
+type ChunkedPayloadRepository interface {
+	CreateChunkedPayload(ctx context.Context, record PayloadRecord) (int64, error)
+	AppendPayloadChunk(ctx context.Context, payloadID int64, chunkNo int, ciphertext string, storedBytes int64) error
+	FinishChunkedPayload(ctx context.Context, payloadID int64, record PayloadRecord) error
 }
 
 // Service turns middleware observations into safe, encrypted persistence work.
@@ -156,8 +168,9 @@ func (s *Service) Start(ctx context.Context, input StartInput) (TraceHandle, err
 	return handle, nil
 }
 
-// RecordPayload sanitizes and encrypts a complete textual payload. A truncated
-// payload is stored as metadata only so an invalid partial JSON prefix cannot leak secrets.
+// RecordPayload encrypts a complete textual payload without body redaction, as
+// explicitly approved for forensic replay. A truncated observation remains
+// metadata-only because it cannot truthfully represent the full exchange.
 func (s *Service) RecordPayload(ctx context.Context, handle TraceHandle, input PayloadInput) error {
 	if s == nil || !handle.Enabled || !handle.PayloadCaptureEnabled {
 		return nil
@@ -185,31 +198,60 @@ func (s *Service) RecordPayload(ctx context.Context, handle TraceHandle, input P
 		return s.repository.CreatePayload(ctx, record)
 	}
 
-	captured := CaptureForStorage(input.ContentType, input.Body, CompleteTextPayloadLimitBytes)
-	record.CaptureStatus = captured.Status
+	record.CaptureStatus = CaptureStatusComplete
 	if record.OriginalBytes == 0 {
-		record.OriginalBytes = captured.OriginalBytes
+		record.OriginalBytes = int64(len(input.Body))
 	}
 	if record.SHA256 == "" {
-		record.SHA256 = captured.SHA256
+		record.SHA256 = hashPayload(input.Body)
 	}
-	if captured.Status == CaptureStatusTruncated {
-		// A bounded prefix is not a safe diagnostic artifact: it may have lost
-		// its JSON structure and must remain metadata-only like reader truncation.
-		record.StoredBytes = 0
-		return s.repository.CreatePayload(ctx, record)
-	}
-	record.StoredBytes = captured.StoredBytes
+	record.StoredBytes = int64(len(input.Body))
+	record.Model = payloadModel(input.Body)
 	if s.encryptor == nil {
 		return fmt.Errorf("model trace encryptor is unavailable")
 	}
-	ciphertext, err := s.encryptor.Encrypt(string(captured.Body))
+	if repository, ok := s.repository.(ChunkedPayloadRepository); ok && repository != nil {
+		return s.recordChunkedPayload(ctx, repository, record, input.Body)
+	}
+	ciphertext, err := s.encryptor.Encrypt(string(input.Body))
 	if err != nil {
 		return fmt.Errorf("encrypt model trace payload: %w", err)
 	}
 	record.Ciphertext = ciphertext
-	record.Model = payloadModel(captured.Body)
 	return s.repository.CreatePayload(ctx, record)
+}
+
+// recordChunkedPayload writes a complete selected body in bounded encrypted
+// segments. The parent remains failed if creation, encryption, or any append
+// fails, so readers cannot mistake a partial sequence for a complete body.
+func (s *Service) recordChunkedPayload(ctx context.Context, repository ChunkedPayloadRepository, record PayloadRecord, body []byte) error {
+	pending := record
+	pending.CaptureStatus = CaptureStatusFailed
+	pending.StorageMode = "chunked"
+	pending.Ciphertext = ""
+	payloadID, err := repository.CreateChunkedPayload(ctx, pending)
+	if err != nil {
+		return fmt.Errorf("create chunked model trace payload: %w", err)
+	}
+	for chunkNo, offset := 0, 0; offset < len(body); chunkNo, offset = chunkNo+1, offset+payloadChunkPlaintextBytes {
+		end := offset + payloadChunkPlaintextBytes
+		if end > len(body) {
+			end = len(body)
+		}
+		ciphertext, encryptErr := s.encryptor.Encrypt(string(body[offset:end]))
+		if encryptErr != nil {
+			return fmt.Errorf("encrypt model trace payload chunk: %w", encryptErr)
+		}
+		if appendErr := repository.AppendPayloadChunk(ctx, payloadID, chunkNo, ciphertext, int64(end-offset)); appendErr != nil {
+			return fmt.Errorf("append model trace payload chunk: %w", appendErr)
+		}
+	}
+	record.StorageMode = "chunked"
+	record.Ciphertext = ""
+	if err := repository.FinishChunkedPayload(ctx, payloadID, record); err != nil {
+		return fmt.Errorf("finish chunked model trace payload: %w", err)
+	}
+	return nil
 }
 
 // Finish persists the final HTTP outcome independently from payload persistence
@@ -288,7 +330,7 @@ func isTextTracePayload(contentType string) bool {
 		strings.HasSuffix(mediaType, "+json") || mediaType == "application/x-ndjson"
 }
 
-// payloadModel 从已脱敏的完整 JSON 中提取有限长度的模型摘要，供列表筛选而非正文检索使用。
+// payloadModel 从完整 JSON 中提取有限长度的模型摘要，供列表筛选而非正文检索使用。
 func payloadModel(body []byte) string {
 	var value struct {
 		Model string `json:"model"`

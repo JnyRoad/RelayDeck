@@ -2,6 +2,7 @@ package modeltrace
 
 import (
 	"context"
+	"io"
 	"time"
 )
 
@@ -130,4 +131,12 @@ type UpstreamAttemptRecorder interface {
 	Recorder
 	StartUpstreamAttempt(ctx context.Context, handle TraceHandle, input UpstreamAttemptInput) error
 	FinishUpstreamAttempt(ctx context.Context, handle TraceHandle, input UpstreamAttemptFinishInput) error
+}
+
+// PayloadStreamRecorder is an optional streaming extension for recorders that
+// can persist a long text body without requiring middleware to aggregate it.
+// A nil writer tells callers to use their bounded metadata-only fallback.
+type PayloadStreamRecorder interface {
+	Recorder
+	StartPayloadStream(ctx context.Context, handle TraceHandle, input PayloadInput) io.WriteCloser
 }

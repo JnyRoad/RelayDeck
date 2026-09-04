@@ -3,13 +3,50 @@ package modeltrace
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	infraerrors "github.com/JnyRoad/RelayDeck/internal/pkg/errors"
+	"github.com/lib/pq"
 )
+
+// conversationCursor captures the stable chronological position of one trace
+// without exposing database identifiers through the administrator API.
+type conversationCursor struct {
+	CreatedAt time.Time `json:"created_at"`
+	TraceID   string    `json:"trace_id"`
+}
+
+// encodeConversationCursor serializes one stable trace position as a URL-safe
+// opaque token for a subsequent bounded conversation request.
+func encodeConversationCursor(cursor conversationCursor) (string, error) {
+	if cursor.CreatedAt.IsZero() || strings.TrimSpace(cursor.TraceID) == "" {
+		return "", fmt.Errorf("model trace conversation cursor is invalid")
+	}
+	encoded, err := json.Marshal(cursor)
+	if err != nil {
+		return "", fmt.Errorf("encode model trace conversation cursor: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(encoded), nil
+}
+
+// decodeConversationCursor validates and restores a URL-safe cursor returned
+// by this service before it becomes a parameterized SQL comparison value.
+func decodeConversationCursor(value string) (conversationCursor, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(value))
+	if err != nil {
+		return conversationCursor{}, fmt.Errorf("model trace conversation cursor is invalid")
+	}
+	var cursor conversationCursor
+	if err := json.Unmarshal(decoded, &cursor); err != nil || cursor.CreatedAt.IsZero() || strings.TrimSpace(cursor.TraceID) == "" {
+		return conversationCursor{}, fmt.Errorf("model trace conversation cursor is invalid")
+	}
+	return cursor, nil
+}
 
 // ListTraces 查询模型调用的轻量索引；查询不连接正文表，也不读取密文。
 func (r *PostgresRepository) ListTraces(ctx context.Context, filter TraceFilter, page, pageSize int) ([]TraceSummary, int64, error) {
@@ -96,7 +133,7 @@ func (r *PostgresRepository) GetTrace(ctx context.Context, traceID string) (Trac
 
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT p.kind, p.attempt_no, p.capture_status, p.mime_type, p.original_bytes,
-			p.stored_bytes, p.sha256, p.created_at
+			p.stored_bytes, p.sha256, p.storage_mode, p.created_at
 		FROM model_call_payloads p
 		JOIN model_call_traces t ON t.id=p.model_call_trace_id
 		WHERE t.trace_id=$1
@@ -109,7 +146,7 @@ func (r *PostgresRepository) GetTrace(ctx context.Context, traceID string) (Trac
 	for rows.Next() {
 		var payload TracePayload
 		if err := rows.Scan(&payload.Kind, &payload.AttemptNo, &payload.CaptureStatus, &payload.ContentType,
-			&payload.OriginalBytes, &payload.StoredBytes, &payload.SHA256, &payload.CreatedAt); err != nil {
+			&payload.OriginalBytes, &payload.StoredBytes, &payload.SHA256, &payload.StorageMode, &payload.CreatedAt); err != nil {
 			return TraceDetail{}, fmt.Errorf("scan model trace payload: %w", err)
 		}
 		detail.Payloads = append(detail.Payloads, payload)
@@ -152,13 +189,13 @@ func (r *PostgresRepository) GetPayload(ctx context.Context, traceID string, kin
 	var payload TracePayload
 	err := r.db.QueryRowContext(ctx, `
 		SELECT p.kind, p.attempt_no, p.capture_status, p.mime_type, p.original_bytes,
-			p.stored_bytes, p.sha256, p.ciphertext, p.created_at
+			p.stored_bytes, p.sha256, p.storage_mode, p.ciphertext, p.created_at
 		FROM model_call_payloads p
 		JOIN model_call_traces t ON t.id=p.model_call_trace_id
 		WHERE t.trace_id=$1 AND p.kind=$2 AND p.attempt_no=$3
 	`, strings.TrimSpace(traceID), string(kind), attemptNo).Scan(
 		&payload.Kind, &payload.AttemptNo, &payload.CaptureStatus, &payload.ContentType,
-		&payload.OriginalBytes, &payload.StoredBytes, &payload.SHA256, &payload.Ciphertext, &payload.CreatedAt,
+		&payload.OriginalBytes, &payload.StoredBytes, &payload.SHA256, &payload.StorageMode, &payload.Ciphertext, &payload.CreatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return TracePayload{}, infraerrors.NotFound("MODEL_TRACE_PAYLOAD_NOT_FOUND", "model trace payload not found")
@@ -167,6 +204,68 @@ func (r *PostgresRepository) GetPayload(ctx context.Context, traceID string, kin
 		return TracePayload{}, fmt.Errorf("get model trace payload: %w", err)
 	}
 	return payload, nil
+}
+
+// GetPayloadPage reads only the selected parent header and the fixed number of
+// encrypted chunks that can produce one bounded plaintext response. Legacy
+// inline rows retain their existing single-ciphertext behavior.
+func (r *PostgresRepository) GetPayloadPage(ctx context.Context, traceID string, kind PayloadKind, attemptNo, chunkNo, maxPlaintextBytes int) (TracePayloadPage, error) {
+	payload, err := r.GetPayload(ctx, traceID, kind, attemptNo)
+	if err != nil {
+		return TracePayloadPage{}, err
+	}
+	page := TracePayloadPage{Payload: payload}
+	if payload.StorageMode != "chunked" {
+		if payload.Ciphertext != "" {
+			page.Ciphertexts = []string{payload.Ciphertext}
+		}
+		page.Payload.Ciphertext = ""
+		return page, nil
+	}
+	if chunkNo < 0 {
+		return TracePayloadPage{}, fmt.Errorf("model trace payload chunk number is invalid")
+	}
+	if maxPlaintextBytes < 1 || maxPlaintextBytes > maxPayloadPagePlaintextBytes {
+		maxPlaintextBytes = maxPayloadPagePlaintextBytes
+	}
+	maxChunks := (maxPlaintextBytes + payloadChunkPlaintextBytes - 1) / payloadChunkPlaintextBytes
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT chunk_no, ciphertext, stored_bytes
+		FROM model_call_payload_chunks
+		WHERE model_call_payload_id=(
+			SELECT p.id
+			FROM model_call_payloads p
+			JOIN model_call_traces t ON t.id=p.model_call_trace_id
+			WHERE t.trace_id=$1 AND p.kind=$2 AND p.attempt_no=$3
+		)
+		AND chunk_no >= $4
+		ORDER BY chunk_no ASC
+		LIMIT $5
+	`, strings.TrimSpace(traceID), string(kind), attemptNo, chunkNo, maxChunks+1)
+	if err != nil {
+		return TracePayloadPage{}, fmt.Errorf("list model trace payload chunks: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var currentChunkNo int
+		var ciphertext string
+		var storedBytes int64
+		if err := rows.Scan(&currentChunkNo, &ciphertext, &storedBytes); err != nil {
+			return TracePayloadPage{}, fmt.Errorf("scan model trace payload chunk: %w", err)
+		}
+		if len(page.Ciphertexts) == maxChunks {
+			page.NextChunkNo = &currentChunkNo
+			break
+		}
+		if storedBytes < 0 || storedBytes > int64(payloadChunkPlaintextBytes) {
+			return TracePayloadPage{}, fmt.Errorf("model trace payload chunk size is invalid")
+		}
+		page.Ciphertexts = append(page.Ciphertexts, ciphertext)
+	}
+	if err := rows.Err(); err != nil {
+		return TracePayloadPage{}, fmt.Errorf("iterate model trace payload chunks: %w", err)
+	}
+	return page, nil
 }
 
 const traceSummarySelect = `
@@ -213,11 +312,21 @@ func scanTraceSummary(scanner traceRowScanner) (TraceSummary, error) {
 	return item, nil
 }
 
-// GetConversation loads the current trace plus only explicitly related turns.
-// It resolves a stable session first, then falls back to exact response lineage;
-// no user, Key, model, IP, or time fields take part in the query.
+// GetConversation keeps the legacy repository capability by returning the
+// initial bounded page instead of loading every linked turn at once.
 func (r *PostgresRepository) GetConversation(ctx context.Context, traceID string) (TraceConversation, error) {
+	return r.GetConversationPage(ctx, traceID, ConversationPageRequest{Limit: defaultConversationTurnPageSize})
+}
+
+// GetConversationPage reads one centered or cursor-directed replay window. It
+// relies only on an explicit session or response lineage and hydrates no more
+// than the requested page of headers, attempts, and payload metadata.
+func (r *PostgresRepository) GetConversationPage(ctx context.Context, traceID string, page ConversationPageRequest) (TraceConversation, error) {
 	current, err := r.GetTrace(ctx, traceID)
+	if err != nil {
+		return TraceConversation{}, err
+	}
+	page, err = normalizeConversationPageRequest(page)
 	if err != nil {
 		return TraceConversation{}, err
 	}
@@ -225,56 +334,153 @@ func (r *PostgresRepository) GetConversation(ctx context.Context, traceID string
 		CurrentTraceID: current.Trace.TraceID,
 		Turns:          []TraceDetail{current},
 	}
+	currentPosition := conversationCursor{CreatedAt: current.Trace.CreatedAt, TraceID: current.Trace.TraceID}
+	var listOlder, listNewer conversationSegmentLoader
 	if current.Trace.SessionID != "" {
-		traceIDs, listErr := r.listConversationTraceIDsBySession(ctx, current.Trace.SessionID)
-		if listErr != nil {
-			return TraceConversation{}, listErr
-		}
-		turns, loadErr := r.loadConversationTurns(ctx, traceIDs)
-		if loadErr != nil {
-			return TraceConversation{}, loadErr
-		}
 		conversation.Linked = true
 		conversation.LinkSource = "session_id"
-		conversation.Turns = turns
+		listOlder = func(pageCtx context.Context, cursor conversationCursor, limit int) ([]conversationCursor, bool, error) {
+			return r.listConversationTraceIDsBySessionSegment(pageCtx, current.Trace.SessionID, cursor, "older", limit)
+		}
+		listNewer = func(pageCtx context.Context, cursor conversationCursor, limit int) ([]conversationCursor, bool, error) {
+			return r.listConversationTraceIDsBySessionSegment(pageCtx, current.Trace.SessionID, cursor, "newer", limit)
+		}
+	} else if current.Trace.PreviousResponseID != "" || current.Trace.ResponseID != "" {
+		conversation.Linked = true
+		conversation.LinkSource = "response_lineage"
+		listOlder = func(pageCtx context.Context, cursor conversationCursor, limit int) ([]conversationCursor, bool, error) {
+			return r.listConversationTraceIDsByLineageSegment(pageCtx, current.Trace.TraceID, cursor, "older", limit)
+		}
+		listNewer = func(pageCtx context.Context, cursor conversationCursor, limit int) ([]conversationCursor, bool, error) {
+			return r.listConversationTraceIDsByLineageSegment(pageCtx, current.Trace.TraceID, cursor, "newer", limit)
+		}
+	} else {
 		return conversation, nil
 	}
-	if current.Trace.PreviousResponseID == "" && current.Trace.ResponseID == "" {
+
+	positions, hasOlder, hasNewer, pageErr := loadConversationPagePositions(ctx, currentPosition, page, listOlder, listNewer)
+	if pageErr != nil {
+		return TraceConversation{}, pageErr
+	}
+	if len(positions) == 0 {
+		conversation.Turns = []TraceDetail{}
 		return conversation, nil
 	}
-	traceIDs, listErr := r.listConversationTraceIDsByLineage(ctx, current.Trace.TraceID)
-	if listErr != nil {
-		return TraceConversation{}, listErr
+	traceIDs := make([]string, 0, len(positions))
+	for _, position := range positions {
+		traceIDs = append(traceIDs, position.TraceID)
 	}
 	turns, loadErr := r.loadConversationTurns(ctx, traceIDs)
 	if loadErr != nil {
 		return TraceConversation{}, loadErr
 	}
-	conversation.Linked = true
-	conversation.LinkSource = "response_lineage"
 	conversation.Turns = turns
+	conversation.OlderCursor, conversation.NewerCursor = conversationPageCursors(turns, hasOlder, hasNewer)
 	return conversation, nil
 }
 
-// listConversationTraceIDsBySession selects calls sharing exactly one explicit
-// stable session identifier in chronological order without touching payload rows.
-func (r *PostgresRepository) listConversationTraceIDsBySession(ctx context.Context, sessionID string) ([]string, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT trace_id
-		FROM model_call_traces
-		WHERE session_id=$1
-		ORDER BY created_at ASC, id ASC
-	`, sessionID)
-	if err != nil {
-		return nil, fmt.Errorf("list model trace session: %w", err)
+// conversationSegmentLoader reads one ordered side of a replay around a stable
+// cursor and reports whether the same direction has another page.
+type conversationSegmentLoader func(context.Context, conversationCursor, int) ([]conversationCursor, bool, error)
+
+// loadConversationPagePositions selects a centered initial window or one
+// cursor-directed window, keeping all query result slices bounded by the page.
+func loadConversationPagePositions(ctx context.Context, current conversationCursor, page ConversationPageRequest, listOlder, listNewer conversationSegmentLoader) ([]conversationCursor, bool, bool, error) {
+	if page.Direction != "" {
+		cursor, err := decodeConversationCursor(page.Cursor)
+		if err != nil {
+			return nil, false, false, err
+		}
+		if page.Direction == "older" {
+			positions, hasMore, loadErr := listOlder(ctx, cursor, page.Limit)
+			return positions, hasMore, len(positions) > 0, loadErr
+		}
+		positions, hasMore, loadErr := listNewer(ctx, cursor, page.Limit)
+		return positions, len(positions) > 0, hasMore, loadErr
 	}
-	defer func() { _ = rows.Close() }()
-	return scanTraceIDRows(rows)
+
+	// Read bounded candidates from both sides so the initial window keeps the
+	// selected trace near the center while filling available adjacent turns.
+	olderCandidates, olderMore, err := listOlder(ctx, current, page.Limit-1)
+	if err != nil {
+		return nil, false, false, err
+	}
+	newerCandidates, newerMore, err := listNewer(ctx, current, page.Limit-1)
+	if err != nil {
+		return nil, false, false, err
+	}
+	older, newer := chooseInitialConversationPositions(olderCandidates, newerCandidates, page.Limit)
+	positions := make([]conversationCursor, 0, len(older)+1+len(newer))
+	positions = append(positions, older...)
+	positions = append(positions, current)
+	positions = append(positions, newer...)
+	return positions, olderMore || len(olderCandidates) > len(older), newerMore || len(newerCandidates) > len(newer), nil
 }
 
-// listConversationTraceIDsByLineage recursively walks exact parent-response
-// links while preventing malformed cyclic identifiers from revisiting a trace.
-func (r *PostgresRepository) listConversationTraceIDsByLineage(ctx context.Context, traceID string) ([]string, error) {
+// chooseInitialConversationPositions balances bounded preceding and following
+// candidates, then uses any spare capacity so a sparse side does not waste a page.
+func chooseInitialConversationPositions(olderCandidates, newerCandidates []conversationCursor, limit int) ([]conversationCursor, []conversationCursor) {
+	capacity := limit - 1
+	olderCount := minConversationCount(len(olderCandidates), capacity/2)
+	newerCount := minConversationCount(len(newerCandidates), capacity-olderCount)
+	olderCount += minConversationCount(len(olderCandidates)-olderCount, capacity-olderCount-newerCount)
+	newerCount += minConversationCount(len(newerCandidates)-newerCount, capacity-olderCount-newerCount)
+	olderStart := len(olderCandidates) - olderCount
+	return olderCandidates[olderStart:], newerCandidates[:newerCount]
+}
+
+// minConversationCount returns the smaller non-negative page allocation.
+func minConversationCount(left, right int) int {
+	if left < right {
+		return left
+	}
+	return right
+}
+
+// conversationPageCursors emits only cursors for adjacent pages proven to
+// exist, using the first and last rendered turns as directional anchors.
+func conversationPageCursors(turns []TraceDetail, hasOlder, hasNewer bool) (string, string) {
+	if len(turns) == 0 {
+		return "", ""
+	}
+	var olderCursor, newerCursor string
+	if hasOlder {
+		olderCursor, _ = encodeConversationCursor(conversationCursor{CreatedAt: turns[0].Trace.CreatedAt, TraceID: turns[0].Trace.TraceID})
+	}
+	if hasNewer {
+		newerCursor, _ = encodeConversationCursor(conversationCursor{CreatedAt: turns[len(turns)-1].Trace.CreatedAt, TraceID: turns[len(turns)-1].Trace.TraceID})
+	}
+	return olderCursor, newerCursor
+}
+
+// listConversationTraceIDsBySessionSegment selects one chronological bounded
+// session side without touching payload rows or materializing the full session.
+func (r *PostgresRepository) listConversationTraceIDsBySessionSegment(ctx context.Context, sessionID string, cursor conversationCursor, direction string, limit int) ([]conversationCursor, bool, error) {
+	comparison, order := conversationPageSQLDirection(direction)
+	if comparison == "" {
+		return nil, false, fmt.Errorf("model trace conversation direction is invalid")
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT trace_id, created_at
+		FROM model_call_traces
+		WHERE session_id=$1 AND (created_at, trace_id) `+comparison+` ($2, $3)
+		ORDER BY created_at `+order+`, trace_id `+order+`
+		LIMIT $4
+	`, sessionID, cursor.CreatedAt, cursor.TraceID, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("list model trace session page: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanConversationPositions(rows, limit, direction == "older")
+}
+
+// listConversationTraceIDsByLineageSegment recursively walks only one bounded
+// chronological side of exact response lineage while preventing cyclic links.
+func (r *PostgresRepository) listConversationTraceIDsByLineageSegment(ctx context.Context, traceID string, cursor conversationCursor, direction string, limit int) ([]conversationCursor, bool, error) {
+	comparison, order := conversationPageSQLDirection(direction)
+	if comparison == "" {
+		return nil, false, fmt.Errorf("model trace conversation direction is invalid")
+	}
 	rows, err := r.db.QueryContext(ctx, `
 		WITH RECURSIVE ancestors AS (
 			SELECT t.id, t.response_id, t.previous_response_id, ARRAY[t.id] AS path
@@ -304,44 +510,151 @@ func (r *PostgresRepository) listConversationTraceIDsByLineage(ctx context.Conte
 			JOIN chain ON chain.response_id <> '' AND child.previous_response_id=chain.response_id
 			WHERE NOT child.id = ANY(chain.path)
 		)
-		SELECT trace.trace_id
+		SELECT trace.trace_id, trace.created_at
 		FROM chain
 		JOIN model_call_traces trace ON trace.id=chain.id
-		ORDER BY trace.created_at ASC, trace.id ASC
-	`, traceID)
+		WHERE (trace.created_at, trace.trace_id) `+comparison+` ($2, $3)
+		ORDER BY trace.created_at `+order+`, trace.trace_id `+order+`
+		LIMIT $4
+	`, traceID, cursor.CreatedAt, cursor.TraceID, limit+1)
 	if err != nil {
-		return nil, fmt.Errorf("list model trace response lineage: %w", err)
+		return nil, false, fmt.Errorf("list model trace response lineage page: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	return scanTraceIDRows(rows)
+	return scanConversationPositions(rows, limit, direction == "older")
 }
 
-// scanTraceIDRows converts ordered trace ID rows into a closed result slice.
-func scanTraceIDRows(rows *sql.Rows) ([]string, error) {
-	traceIDs := make([]string, 0)
+// conversationPageSQLDirection returns only fixed SQL syntax for a validated
+// direction, keeping client values out of the query text.
+func conversationPageSQLDirection(direction string) (string, string) {
+	if direction == "older" {
+		return "<", "DESC"
+	}
+	if direction == "newer" {
+		return ">", "ASC"
+	}
+	return "", ""
+}
+
+// scanConversationPositions converts one bounded SQL segment to chronological
+// order and keeps the extra row only as the has-more signal.
+func scanConversationPositions(rows *sql.Rows, limit int, reverse bool) ([]conversationCursor, bool, error) {
+	positions := make([]conversationCursor, 0, limit)
 	for rows.Next() {
-		var traceID string
-		if err := rows.Scan(&traceID); err != nil {
-			return nil, fmt.Errorf("scan model trace id: %w", err)
+		var position conversationCursor
+		if err := rows.Scan(&position.TraceID, &position.CreatedAt); err != nil {
+			return nil, false, fmt.Errorf("scan model trace conversation position: %w", err)
 		}
-		traceIDs = append(traceIDs, traceID)
+		positions = append(positions, position)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate model trace ids: %w", err)
+		return nil, false, fmt.Errorf("iterate model trace conversation positions: %w", err)
 	}
-	return traceIDs, nil
+	hasMore := len(positions) > limit
+	if hasMore {
+		positions = positions[:limit]
+	}
+	if reverse {
+		for left, right := 0, len(positions)-1; left < right; left, right = left+1, right-1 {
+			positions[left], positions[right] = positions[right], positions[left]
+		}
+	}
+	return positions, hasMore, nil
 }
 
-// loadConversationTurns reads each selected trace header and payload metadata
-// in chronological order. GetTrace never reads payload ciphertext.
+// loadConversationTurns batch-hydrates a bounded page in three fixed queries:
+// headers, ordered attempts, then payload metadata; no query count scales with
+// the number of turns and no ciphertext is selected.
 func (r *PostgresRepository) loadConversationTurns(ctx context.Context, traceIDs []string) ([]TraceDetail, error) {
+	if len(traceIDs) == 0 {
+		return []TraceDetail{}, nil
+	}
+	rows, err := r.db.QueryContext(ctx, traceSummarySelect+` WHERE t.trace_id = ANY($1)`, pq.Array(traceIDs))
+	if err != nil {
+		return nil, fmt.Errorf("list model trace conversation headers: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	byTraceID := make(map[string]*TraceDetail, len(traceIDs))
+	for rows.Next() {
+		trace, scanErr := scanTraceSummary(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		byTraceID[trace.TraceID] = &TraceDetail{Trace: trace, Attempts: []TraceAttempt{}, Payloads: []TracePayload{}}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate model trace conversation headers: %w", err)
+	}
+	attemptRows, err := r.db.QueryContext(ctx, `
+		SELECT trace.trace_id, attempt.attempt_no, attempt.account_id, attempt.account_snapshot,
+			attempt.upstream_route, attempt.upstream_model, attempt.outcome,
+			attempt.status_code, attempt.error_stage, attempt.error_code,
+			attempt.duration_ms, attempt.started_at, attempt.completed_at
+		FROM model_call_trace_attempts attempt
+		JOIN model_call_traces trace ON trace.id=attempt.model_call_trace_id
+		WHERE trace.trace_id = ANY($1)
+		ORDER BY trace.created_at ASC, trace.trace_id ASC, attempt.attempt_no ASC, attempt.id ASC
+	`, pq.Array(traceIDs))
+	if err != nil {
+		return nil, fmt.Errorf("list model trace conversation attempts: %w", err)
+	}
+	defer func() { _ = attemptRows.Close() }()
+	for attemptRows.Next() {
+		var traceID string
+		var attempt TraceAttempt
+		var accountID sql.NullInt64
+		var statusCode, durationMS sql.NullInt32
+		var completedAt sql.NullTime
+		if err := attemptRows.Scan(&traceID, &attempt.AttemptNo, &accountID, &attempt.AccountSnapshot,
+			&attempt.UpstreamRoute, &attempt.UpstreamModel, &attempt.Outcome, &statusCode,
+			&attempt.ErrorStage, &attempt.ErrorCode, &durationMS, &attempt.StartedAt, &completedAt); err != nil {
+			return nil, fmt.Errorf("scan model trace conversation attempt: %w", err)
+		}
+		attempt.AccountID = optionalInt64(accountID)
+		attempt.StatusCode = optionalInt(statusCode)
+		attempt.DurationMS = optionalInt(durationMS)
+		attempt.CompletedAt = optionalTime(completedAt)
+		if detail := byTraceID[traceID]; detail != nil {
+			detail.Attempts = append(detail.Attempts, attempt)
+		}
+	}
+	if err := attemptRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate model trace conversation attempts: %w", err)
+	}
+	payloadRows, err := r.db.QueryContext(ctx, `
+		SELECT trace.trace_id, p.kind, p.attempt_no, p.capture_status, p.mime_type,
+			p.original_bytes, p.stored_bytes, p.sha256, p.storage_mode, p.created_at
+		FROM model_call_payloads p
+		JOIN model_call_traces trace ON trace.id=p.model_call_trace_id
+		WHERE trace.trace_id = ANY($1)
+		ORDER BY trace.created_at ASC, trace.trace_id ASC, p.created_at ASC, p.id ASC
+	`, pq.Array(traceIDs))
+	if err != nil {
+		return nil, fmt.Errorf("list model trace conversation payloads: %w", err)
+	}
+	defer func() { _ = payloadRows.Close() }()
+	for payloadRows.Next() {
+		var traceID string
+		var payload TracePayload
+		if err := payloadRows.Scan(&traceID, &payload.Kind, &payload.AttemptNo, &payload.CaptureStatus,
+			&payload.ContentType, &payload.OriginalBytes, &payload.StoredBytes, &payload.SHA256,
+			&payload.StorageMode, &payload.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan model trace conversation payload: %w", err)
+		}
+		if detail := byTraceID[traceID]; detail != nil {
+			detail.Payloads = append(detail.Payloads, payload)
+		}
+	}
+	if err := payloadRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate model trace conversation payloads: %w", err)
+	}
 	turns := make([]TraceDetail, 0, len(traceIDs))
 	for _, traceID := range traceIDs {
-		turn, err := r.GetTrace(ctx, traceID)
-		if err != nil {
-			return nil, err
+		detail := byTraceID[traceID]
+		if detail == nil {
+			return nil, infraerrors.NotFound("MODEL_TRACE_NOT_FOUND", "model trace not found")
 		}
-		turns = append(turns, turn)
+		turns = append(turns, *detail)
 	}
 	return turns, nil
 }

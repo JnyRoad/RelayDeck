@@ -14,9 +14,22 @@ Returns one root summary, ordered attempt metadata, and payload metadata only. I
 
 Returns the selected call plus only calls connected by the same non-empty explicit session ID or exact response lineage. If neither exists, it returns the single call and `linked: false`. No user/Key/time inference is permitted. Body text remains absent.
 
+The initial request is centered on `traceID`. It accepts `direction=older|newer`,
+an opaque `cursor` returned by the preceding page, and `limit` from 1 through
+50 (default 50). The response has `turns`, `older_cursor`, and `newer_cursor`.
+Each page batch-loads its trace headers, attempts and body metadata; its database
+query count does not increase with the total number of turns in the session.
+
 ## `GET /:traceID/payloads/:kind?attempt_no=N`
 
-Decrypts and returns exactly one selected payload. Valid kinds include client, upstream request/response and upstream error kinds. The response contains content, MIME type, original/stored byte counts, capture status and SHA-256; never ciphertext.
+Decrypts and returns a consecutive page of exactly one selected payload. Valid
+kinds include client, upstream request/response and upstream error kinds. It
+accepts `chunk_no` as a zero-based continuation cursor and returns at most 1 MiB
+of plaintext `content`, `next_chunk_no` when additional chunks remain, plus MIME
+type, original/stored byte counts, capture status and SHA-256; never ciphertext.
+
+For legacy inline payload rows, the endpoint preserves existing availability
+semantics while new payloads always use the bounded chunked read path.
 
 ## `POST /:traceID/access-events`
 

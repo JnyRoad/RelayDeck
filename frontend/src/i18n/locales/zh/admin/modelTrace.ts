@@ -16,7 +16,7 @@ export default {
     pagination: { total: '共 {total} 条调用' },
     empty: '没有符合筛选条件的模型调用。',
     detail: {
-      title: '完整调用链路', trace: '当前调用', linked: '已按 {source} 关联会话', unlinked: '未找到可验证的会话关联，仅展示此条调用。', views: '调用详情视图', chat: '会话回放', rawChain: '原始链路', currentTurn: '当前调用', user: '用户输入', model: '模型返回', attempt: '上游尝试 #{number}', loadBody: '加载正文', loadingBody: '正在加载正文…', payloadMetadata: '状态：{status} · 原始：{original} B · 保存：{stored} B · SHA-256：{hash}', contentUnavailable: '正文不可查看（{status}）。未保存、不可读取或无法解密的内容不会展示。',
+      title: '完整调用链路', trace: '当前调用', linked: '已按 {source} 关联会话', unlinked: '未找到可验证的会话关联，仅展示此条调用。', views: '调用详情视图', chat: '会话回放', rawChain: '原始链路', currentTurn: '当前调用', user: '用户输入', model: '模型返回', attempt: '上游尝试 #{number}', loadBody: '加载正文', loadMoreBody: '加载更多正文', loadOlder: '加载更早记录', loadNewer: '加载更新记录', loadingBody: '正在加载正文…', payloadMetadata: '状态：{status} · 原始：{original} B · 保存：{stored} B · SHA-256：{hash}', contentUnavailable: '正文不可查看（{status}）。未保存、不可读取或无法解密的内容不会展示。',
     },
     errors: { load: '无法加载模型调用追踪。', detail: '无法加载调用详情。', save: '保存追踪策略失败。', retention: '保留天数必须是 1 到 365 的整数。', preview: '无法生成清理预览。', cleanup: '清理到期调用失败。', copy: '无法复制正文。' },
   },

@@ -72,8 +72,9 @@ describe('ModelTraceDetailDialog', () => {
     expect(wrapper.findAll('[data-testid^="trace-chat-turn-"]')).toHaveLength(3)
     expect(wrapper.get('[data-testid="trace-chat-turn-trace-current"]').classes()).toContain('trace-current-turn')
     expect(wrapper.get('[data-testid="model-trace-chat-scroll"]').classes()).toContain('overflow-y-auto')
-    expect(wrapper.text()).toContain('trace-first-client_request')
-    expect(wrapper.text()).toContain('trace-last-client_response')
+    expect(wrapper.text()).toContain('trace-current-client_request')
+    expect(wrapper.text()).not.toContain('trace-first-client_request')
+    expect(getPayload).toHaveBeenCalledTimes(2)
   })
 
   it('labels an unlinked record instead of inferring a conversation from identity', async () => {
@@ -88,6 +89,46 @@ describe('ModelTraceDetailDialog', () => {
 
     expect(wrapper.get('[data-testid="model-trace-unlinked"]').text()).toContain('admin.modelTrace.detail.unlinked')
     expect(wrapper.findAll('[data-testid^="trace-chat-turn-"]')).toHaveLength(1)
+  })
+
+  it('loads the next replay page from the server cursor and keeps the prior turns visible', async () => {
+    getConversation.mockReset()
+      .mockResolvedValueOnce({
+        current_trace_id: 'trace-current', linked: true, link_source: 'session_id', newer_cursor: 'newer-cursor',
+        turns: [{ trace: { trace_id: 'trace-current' }, payloads: [] }],
+      })
+      .mockResolvedValueOnce({
+        current_trace_id: 'trace-current', linked: true, link_source: 'session_id',
+        turns: [{ trace: { trace_id: 'trace-next' }, payloads: [] }],
+      })
+    const wrapper = mountDialog('trace-current')
+    await flushPromises()
+
+    await wrapper.get('[data-testid="model-trace-load-newer"]').trigger('click')
+    await flushPromises()
+
+    expect(getConversation).toHaveBeenLastCalledWith('trace-current', { direction: 'newer', cursor: 'newer-cursor', limit: 50 })
+    expect(wrapper.findAll('[data-testid^="trace-chat-turn-"]')).toHaveLength(2)
+    expect(wrapper.get('[data-testid="trace-chat-turn-trace-current"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="trace-chat-turn-trace-next"]').exists()).toBe(true)
+  })
+
+  it('appends a selected body continuation without replacing its loaded prefix', async () => {
+    getConversation.mockResolvedValueOnce({
+      current_trace_id: 'trace-body', linked: false, link_source: '',
+      turns: [{ trace: { trace_id: 'trace-body' }, payloads: [{ kind: 'client_request', attempt_no: 0, content_status: 'available' }] }],
+    })
+    getPayload.mockReset()
+      .mockResolvedValueOnce({ kind: 'client_request', attempt_no: 0, content_status: 'available', content: 'first page ', next_chunk_no: 4 })
+      .mockResolvedValueOnce({ kind: 'client_request', attempt_no: 0, content_status: 'available', content: 'second page' })
+    const wrapper = mountDialog('trace-body')
+    await flushPromises()
+
+    await wrapper.get('[data-testid="model-trace-load-more-payload"]').trigger('click')
+    await flushPromises()
+
+    expect(getPayload).toHaveBeenLastCalledWith('trace-body', 'client_request', 0, 4)
+    expect(wrapper.text()).toContain('first page second page')
   })
 
   it('does not render a stale payload after the dialog switches to another trace', async () => {

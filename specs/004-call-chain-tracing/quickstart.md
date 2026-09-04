@@ -13,7 +13,7 @@ From `backend/`, run focused Go tests for `internal/modeltrace`, `internal/serve
 1. Summary search by user/Key snapshot without body query.
 2. Explicit three-turn session linkage and the single-turn unlinked boundary.
 3. Two upstream attempts with request/response or error payloads in order.
-4. Credential sanitization and recorder failure not changing the gateway response.
+4. Unredacted encrypted-body retention and recorder failure not changing the gateway response.
 5. Retention validation and cleanup cascading attempts/payloads while leaving use records intact.
 
 From `frontend/`, run the focused Vitest component tests, `vue-tsc --noEmit`, and the production build.
