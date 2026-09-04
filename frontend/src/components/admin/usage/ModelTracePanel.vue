@@ -119,12 +119,13 @@ const listParams = computed<ModelTraceQueryParams>(() => ({ page: page.value, pa
 let listRequestVersion = 0
 let detailRequestVersion = 0
 let payloadRequestVersion = 0
-let configRequestVersion = 0
+let configSaveRequestVersion = 0
+let configReadVersion = 0
 
 /** 同步加载索引与策略；详情正文不会随列表请求下载。 */
 const load = async () => {
 	const requestVersion = ++listRequestVersion
-	const configVersionAtStart = configRequestVersion
+	const configVersionAtStart = configReadVersion
   loading.value = true
   errorMessage.value = ''
   try {
@@ -132,7 +133,7 @@ const load = async () => {
 		if (requestVersion !== listRequestVersion) return
     items.value = listResult.items || []
     total.value = listResult.total || 0
-		if (configVersionAtStart === configRequestVersion) Object.assign(config, configResult)
+		if (configVersionAtStart === configReadVersion) Object.assign(config, configResult)
   } catch {
 		if (requestVersion === listRequestVersion) errorMessage.value = t('admin.modelTrace.errors.load')
   } finally {
@@ -195,16 +196,19 @@ const payloadKey = (payload: ModelTracePayload) => `${payload.kind}-${payload.at
 
 /** 保存完整设置快照，并由后端校验留存天数与启用策略。 */
 const saveConfig = async () => {
-	const requestVersion = ++configRequestVersion
+	const requestVersion = ++configSaveRequestVersion
   saving.value = true
   errorMessage.value = ''
   try {
     const saved = await modelTraceAPI.updateConfig({ ...config, retention_days: Number(config.retention_days) })
-		if (requestVersion === configRequestVersion) Object.assign(config, saved)
-  } catch {
-		if (requestVersion === configRequestVersion) errorMessage.value = t('admin.modelTrace.errors.save')
-  } finally {
-		if (requestVersion === configRequestVersion) saving.value = false
+		if (requestVersion === configSaveRequestVersion) {
+			Object.assign(config, saved)
+			configReadVersion++
+		}
+	} catch {
+		if (requestVersion === configSaveRequestVersion) errorMessage.value = t('admin.modelTrace.errors.save')
+	} finally {
+		if (requestVersion === configSaveRequestVersion) saving.value = false
   }
 }
 

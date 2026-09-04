@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/JnyRoad/RelayDeck/internal/modeltrace"
+	infraerrors "github.com/JnyRoad/RelayDeck/internal/pkg/errors"
 	"github.com/JnyRoad/RelayDeck/internal/pkg/response"
 	"github.com/JnyRoad/RelayDeck/internal/server/middleware"
 
@@ -18,6 +19,12 @@ type ModelTraceHandler struct {
 	queryService   *modeltrace.QueryService
 	settings       *modeltrace.SettingsConfigStore
 	cleanupService *modeltrace.CleanupService
+}
+
+// modelTraceCleanupRequest requires an explicit destructive-action confirmation
+// from the administrator interface before expired traces can be deleted.
+type modelTraceCleanupRequest struct {
+	Confirm bool `json:"confirm"`
 }
 
 // NewModelTraceHandler 以独立的查询、设置和清理依赖构建管理端处理器。
@@ -140,6 +147,11 @@ func (h *ModelTraceHandler) RunCleanup(c *gin.Context) {
 	subject, ok := middleware.GetAuthSubjectFromContext(c)
 	if !ok || subject.UserID <= 0 {
 		response.Error(c, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	var request modelTraceCleanupRequest
+	if err := c.ShouldBindJSON(&request); err != nil || !request.Confirm {
+		response.ErrorFrom(c, infraerrors.BadRequest("model_call_trace_cleanup_confirmation_invalid", "Explicit cleanup confirmation is required"))
 		return
 	}
 	result, err := h.cleanupService.RunManual(c.Request.Context(), subject.UserID)

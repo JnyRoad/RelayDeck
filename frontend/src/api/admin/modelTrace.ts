@@ -120,7 +120,7 @@ export async function previewCleanup(): Promise<ModelTraceCleanupPreview> {
 
 /** 执行管理员已确认的到期调用清理。 */
 export async function runCleanup(): Promise<{ deleted_traces: number; deleted_payloads: number; deleted_bytes: number }> {
-  const { data } = await apiClient.post<{ deleted_traces: number; deleted_payloads: number; deleted_bytes: number }>('/admin/model-traces/cleanup')
+  const { data } = await apiClient.post<{ deleted_traces: number; deleted_payloads: number; deleted_bytes: number }>('/admin/model-traces/cleanup', { confirm: true })
   return data
 }
 

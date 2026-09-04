@@ -67,7 +67,7 @@ type CleanupService struct {
 	running     bool
 }
 
-// NewCleanupService 使用默认的一小时扫描周期和有界批量大小构建清理任务。
+// NewCleanupService uses the default daily scan period and bounded batch size.
 func NewCleanupService(configStore ConfigStore, repository CleanupRepository) *CleanupService {
 	return &CleanupService{
 		configStore: configStore,

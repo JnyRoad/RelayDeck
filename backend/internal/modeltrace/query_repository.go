@@ -37,7 +37,7 @@ func (r *PostgresRepository) ListTraces(ctx context.Context, filter TraceFilter,
 	if err != nil {
 		return nil, 0, fmt.Errorf("list model traces: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := make([]TraceSummary, 0)
 	for rows.Next() {
 		item, scanErr := scanTraceSummary(rows)
@@ -79,7 +79,7 @@ func (r *PostgresRepository) GetTrace(ctx context.Context, traceID string) (Trac
 	if err != nil {
 		return TraceDetail{}, fmt.Errorf("list model trace payloads: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	detail := TraceDetail{Trace: trace, Payloads: make([]TracePayload, 0)}
 	for rows.Next() {
 		var payload TracePayload

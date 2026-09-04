@@ -89,6 +89,25 @@ func TestSanitizeForStorageRedactsStreamingJSON(t *testing.T) {
 	}
 }
 
+// TestSanitizeForStorageRedactsMultilineSSEJSON verifies that one SSE event
+// cannot bypass redaction by splitting a valid JSON object across data lines.
+func TestSanitizeForStorageRedactsMultilineSSEJSON(t *testing.T) {
+	raw := "event: response\ndata: {\"api_key\":\ndata: \"multiline-sse-canary\",\"message\":\"safe\"}\n\n"
+
+	got := SanitizeForStorage("text/event-stream", []byte(raw))
+
+	stored := string(got.Body)
+	if strings.Contains(stored, "multiline-sse-canary") {
+		t.Fatalf("sanitized SSE event leaked credential: %s", stored)
+	}
+	if !strings.Contains(stored, "[REDACTED]") {
+		t.Fatalf("sanitized SSE event = %s, want redaction marker", stored)
+	}
+	if got.Status != CaptureStatusRedacted {
+		t.Fatalf("capture status = %q, want %q", got.Status, CaptureStatusRedacted)
+	}
+}
+
 // TestIsTraceableGatewayRouteLimitsCaptureToModelCalls verifies that adjacent
 // gateway management endpoints cannot begin storing arbitrary admin-style data.
 func TestIsTraceableGatewayRouteLimitsCaptureToModelCalls(t *testing.T) {

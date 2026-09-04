@@ -38,7 +38,7 @@
 
 `POST /admin/model-traces/cleanup`
 
-由管理界面在展示预览后要求管理员明确确认；创建清理运行并返回其运行摘要。若部署启用 step-up，必须强制既有 step-up 检查。
+请求正文必须为 `{ "confirm": true }`。管理界面仅在展示预览并获得浏览器确认后发送该值；服务端拒绝缺失或非真确认，避免其他 API 调用方绕过确认。创建清理运行并返回其运行摘要。若部署启用 step-up，本接口必须强制既有 step-up 检查。
 
 ## Error Contract
 

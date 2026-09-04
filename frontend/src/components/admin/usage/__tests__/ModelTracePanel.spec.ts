@@ -115,4 +115,31 @@ describe('ModelTracePanel', () => {
     expect(wrapper.text()).toContain('trace-new-detail')
     expect(wrapper.text()).not.toContain('trace-old-detail')
   })
+
+  it('does not overwrite a saved config with a pre-save config read', async () => {
+    let resolveSave: (value: any) => void = () => undefined
+    let resolveStaleConfig: (value: any) => void = () => undefined
+    const save = new Promise<any>((resolve) => { resolveSave = resolve })
+    const staleConfig = new Promise<any>((resolve) => { resolveStaleConfig = resolve })
+    getConfig.mockReset()
+      .mockResolvedValueOnce({ enabled: false, payload_capture_enabled: false, auto_cleanup_enabled: false, retention_days: 7 })
+      .mockReturnValueOnce(staleConfig)
+    updateConfig.mockReset().mockReturnValueOnce(save)
+    const wrapper = mount(ModelTracePanel)
+    await flushPromises()
+
+    await wrapper.get('[data-testid="model-trace-enabled"]').setValue(true)
+    await wrapper.get('[data-testid="model-trace-retention-days"]').setValue(14)
+    await wrapper.get('[data-testid="model-trace-save"]').trigger('click')
+    await wrapper.get('button.btn.btn-secondary').trigger('click')
+    await flushPromises()
+    resolveSave({ enabled: true, payload_capture_enabled: false, auto_cleanup_enabled: true, retention_days: 14 })
+    await flushPromises()
+    resolveStaleConfig({ enabled: false, payload_capture_enabled: false, auto_cleanup_enabled: false, retention_days: 7 })
+    await flushPromises()
+
+    expect((wrapper.get('[data-testid="model-trace-enabled"]').element as HTMLInputElement).checked).toBe(true)
+    expect((wrapper.get('[data-testid="model-trace-auto-cleanup"]').element as HTMLInputElement).checked).toBe(true)
+    expect((wrapper.get('[data-testid="model-trace-retention-days"]').element as HTMLInputElement).value).toBe('14')
+  })
 })

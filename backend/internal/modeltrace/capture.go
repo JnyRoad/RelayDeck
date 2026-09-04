@@ -60,9 +60,9 @@ func SanitizeForStorage(contentType string, raw []byte) CapturedPayload {
 	case isJSONContentType(contentType):
 		sanitized, redacted = sanitizeJSONDocument(raw)
 	case isNDJSONContentType(contentType):
-		sanitized, redacted = sanitizeJSONLines(raw, false)
+		sanitized, redacted = sanitizeJSONLines(raw)
 	case isSSEContentType(contentType):
-		sanitized, redacted = sanitizeJSONLines(raw, true)
+		sanitized, redacted = sanitizeSSEJSONEvents(raw)
 	default:
 		return result
 	}
@@ -90,13 +90,13 @@ func sanitizeJSONDocument(raw []byte) ([]byte, bool) {
 	return sanitized, true
 }
 
-// sanitizeJSONLines redacts complete JSON records while preserving NDJSON or
-// SSE framing, line ordering, and non-JSON protocol control lines.
-func sanitizeJSONLines(raw []byte, sse bool) ([]byte, bool) {
+// sanitizeJSONLines redacts complete NDJSON records while preserving line
+// ordering, line endings, and invalid records without creating new payloads.
+func sanitizeJSONLines(raw []byte) ([]byte, bool) {
 	lines := strings.SplitAfter(string(raw), "\n")
 	changed := false
 	for index, line := range lines {
-		prefix, jsonText, suffix, ok := traceJSONLineParts(line, sse)
+		prefix, jsonText, suffix, ok := traceNDJSONLineParts(line)
 		if !ok {
 			continue
 		}
@@ -113,33 +113,92 @@ func sanitizeJSONLines(raw []byte, sse bool) ([]byte, bool) {
 	return []byte(strings.Join(lines, "")), true
 }
 
-// traceJSONLineParts separates a line's JSON candidate from preserved protocol
-// syntax. SSE only allows JSON after a data: field; NDJSON treats the body as
-// the candidate and retains its original line ending.
-func traceJSONLineParts(line string, sse bool) (prefix, jsonText, suffix string, ok bool) {
-	suffix = ""
-	if strings.HasSuffix(line, "\n") {
-		line = strings.TrimSuffix(line, "\n")
-		suffix = "\n"
+// sanitizeSSEJSONEvents joins data fields using SSE event semantics before
+// redaction, so a JSON document split across multiple lines cannot leak.
+func sanitizeSSEJSONEvents(raw []byte) ([]byte, bool) {
+	lines := strings.SplitAfter(string(raw), "\n")
+	changed := false
+	type dataField struct {
+		index  int
+		prefix string
+		suffix string
+		value  string
 	}
-	if sse {
-		leading := len(line) - len(strings.TrimLeft(line, " \t"))
-		field := line[leading:]
-		if !strings.HasPrefix(field, "data:") {
-			return "", "", suffix, false
+	fields := make([]dataField, 0)
+	flushEvent := func() {
+		if len(fields) == 0 {
+			return
 		}
-		prefix = line[:leading+len("data:")]
-		jsonText = strings.TrimSpace(field[len("data:"):])
-		if jsonText == "" {
-			return "", "", suffix, false
+		parts := make([]string, 0, len(fields))
+		for _, field := range fields {
+			parts = append(parts, field.value)
 		}
-		return prefix, jsonText, suffix, true
+		sanitized, redacted := sanitizeJSONDocument([]byte(strings.Join(parts, "\n")))
+		if redacted {
+			first := fields[0]
+			lines[first.index] = first.prefix + " " + string(sanitized) + first.suffix
+			for _, field := range fields[1:] {
+				lines[field.index] = field.prefix + field.suffix
+			}
+			changed = true
+		}
+		fields = fields[:0]
 	}
+	for index, line := range lines {
+		prefix, value, suffix, ok := traceSSEDataLineParts(line)
+		if ok {
+			fields = append(fields, dataField{index: index, prefix: prefix, suffix: suffix, value: value})
+			continue
+		}
+		if strings.TrimSpace(line) == "" {
+			flushEvent()
+		}
+	}
+	flushEvent()
+	if !changed {
+		return append([]byte(nil), raw...), false
+	}
+	return []byte(strings.Join(lines, "")), true
+}
+
+// traceNDJSONLineParts separates one NDJSON candidate from its original line
+// ending. Blank lines are preserved because they are not JSON records.
+func traceNDJSONLineParts(line string) (prefix, jsonText, suffix string, ok bool) {
+	line, suffix = splitTraceLineEnding(line)
 	jsonText = strings.TrimSpace(line)
 	if jsonText == "" {
 		return "", "", suffix, false
 	}
 	return "", jsonText, suffix, true
+}
+
+// traceSSEDataLineParts extracts one data field while preserving protocol
+// syntax and line endings. Event-level joining happens separately.
+func traceSSEDataLineParts(line string) (prefix, value, suffix string, ok bool) {
+	line, suffix = splitTraceLineEnding(line)
+	leading := len(line) - len(strings.TrimLeft(line, " \t"))
+	field := line[leading:]
+	if !strings.HasPrefix(field, "data:") {
+		return "", "", suffix, false
+	}
+	value = strings.TrimSpace(field[len("data:"):])
+	if value == "" {
+		return "", "", suffix, false
+	}
+	return line[:leading+len("data:")], value, suffix, true
+}
+
+// splitTraceLineEnding removes one preserved LF or CRLF sequence before a
+// sanitizer inspects protocol content and returns that exact sequence to reuse.
+func splitTraceLineEnding(line string) (body, suffix string) {
+	switch {
+	case strings.HasSuffix(line, "\r\n"):
+		return strings.TrimSuffix(line, "\r\n"), "\r\n"
+	case strings.HasSuffix(line, "\n"):
+		return strings.TrimSuffix(line, "\n"), "\n"
+	default:
+		return line, ""
+	}
 }
 
 // CaptureForStorage sanitizes a payload, records the original hash, and bounds

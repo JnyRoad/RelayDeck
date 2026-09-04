@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/JnyRoad/RelayDeck/internal/modeltrace"
+	"github.com/JnyRoad/RelayDeck/internal/server/middleware"
 	"github.com/gin-gonic/gin"
 )
 
@@ -48,6 +49,34 @@ func (modelTraceDecryptorStub) Decrypt(string) (string, error) {
 // modelTraceSettingsRepositoryStub 提供独立的系统设置内存存储。
 type modelTraceSettingsRepositoryStub struct {
 	value string
+}
+
+// modelTraceCleanupRepositoryStub records manual cleanup starts without
+// deleting data so handler confirmation tests can observe side effects.
+type modelTraceCleanupRepositoryStub struct {
+	startedRuns int
+}
+
+// PreviewExpired returns an empty preview because handler tests do not inspect it.
+func (s *modelTraceCleanupRepositoryStub) PreviewExpired(context.Context, time.Time) (modeltrace.CleanupPreview, error) {
+	return modeltrace.CleanupPreview{}, nil
+}
+
+// DeleteExpired returns an empty result because valid confirmation tests only
+// need to prove that the cleanup service was allowed to start.
+func (s *modelTraceCleanupRepositoryStub) DeleteExpired(context.Context, time.Time, int) (modeltrace.CleanupResult, error) {
+	return modeltrace.CleanupResult{}, nil
+}
+
+// StartCleanupRun records the audit-run creation requested by manual cleanup.
+func (s *modelTraceCleanupRepositoryStub) StartCleanupRun(context.Context, modeltrace.CleanupMode, *int64, time.Time) (int64, error) {
+	s.startedRuns++
+	return int64(s.startedRuns), nil
+}
+
+// FinishCleanupRun completes the fake audit lifecycle without external I/O.
+func (*modelTraceCleanupRepositoryStub) FinishCleanupRun(context.Context, int64, modeltrace.CleanupResult, error) error {
+	return nil
 }
 
 // GetValue 返回当前设置值；空值代表首次部署默认策略。
@@ -116,5 +145,49 @@ func TestModelTraceHandlerReadsOnlySelectedPayload(t *testing.T) {
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "[REDACTED]") || strings.Contains(response.Body.String(), "ciphertext-canary") {
 		t.Fatalf("payload response status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+// TestModelTraceHandlerRequiresCleanupConfirmation verifies that a manual
+// cleanup cannot reach deletion until an authenticated administrator supplies
+// an explicit confirmation body.
+func TestModelTraceHandlerRequiresCleanupConfirmation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cleanupRepository := &modelTraceCleanupRepositoryStub{}
+	handler := newModelTraceHandlerForTest(&modelTraceQueryRepositoryStub{})
+	handler.cleanupService = modeltrace.NewCleanupService(nil, cleanupRepository)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 7})
+		c.Next()
+	})
+	router.POST("/admin/model-traces/cleanup", handler.RunCleanup)
+
+	for _, testCase := range []struct {
+		name          string
+		body          string
+		wantStatus    int
+		wantRunStarts int
+	}{
+		{name: "missing confirmation", body: `{}`, wantStatus: http.StatusBadRequest, wantRunStarts: 0},
+		{name: "negative confirmation", body: `{"confirm":false}`, wantStatus: http.StatusBadRequest, wantRunStarts: 0},
+		{name: "explicit confirmation", body: `{"confirm":true}`, wantStatus: http.StatusOK, wantRunStarts: 1},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/admin/model-traces/cleanup", strings.NewReader(testCase.body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+
+			if response.Code != testCase.wantStatus {
+				t.Fatalf("cleanup status=%d body=%s, want %d", response.Code, response.Body.String(), testCase.wantStatus)
+			}
+			if cleanupRepository.startedRuns != testCase.wantRunStarts {
+				t.Fatalf("cleanup starts=%d, want %d", cleanupRepository.startedRuns, testCase.wantRunStarts)
+			}
+			if testCase.wantStatus == http.StatusBadRequest && !strings.Contains(response.Body.String(), "model_call_trace_cleanup_confirmation_invalid") {
+				t.Fatalf("invalid confirmation response=%s", response.Body.String())
+			}
+		})
 	}
 }
