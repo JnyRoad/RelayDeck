@@ -28,10 +28,17 @@ RelayDeck has a built-in payment system that enables user self-service top-up wi
 
 > Alipay/WeChat Pay direct and EasyPay can both exist as backend provider instances, but the frontend always exposes only two visible buttons: `Alipay` and `WeChat Pay`. Admins choose exactly one source for each visible method: direct or EasyPay. Direct channels connect to payment APIs directly with lower fees; EasyPay aggregates through third-party platforms with easier setup.
 
-> **EasyPay Provider Recommendations**: Both options below are third-party aggregators compatible with the EasyPay protocol. Pick based on the funding channel and settlement currency you need:
+> **EasyPay provider selection**: RelayDeck does not recommend, endorse, or
+> receive compensation from any provider. Choose a provider compatible with the
+> EasyPay protocol based on your jurisdiction, funding channel, settlement
+> currency, and compliance requirements.
 >
-> - **Domestic channel / CNY settlement** — [ZPay](https://z-pay.cn/?uid=23808) (`https://z-pay.cn/?uid=23808`): direct integration with official Alipay / WeChat Pay APIs, fee **1.6%**; funds go straight to the merchant account with **T+1 automatic settlement**. Supports **individual users** (no business license required) with up to 10,000 CNY daily transactions; business-licensed accounts have no limit. Link contains the referral code of an external payment service original author [@touwaeriol](https://github.com/touwaeriol) — feel free to remove it.
-> - **International channel / USDT or USD settlement** — [Kyren Topup](https://kyrenpay.com/) (`https://kyrenpay.com/`): a ready-to-launch global payment stack for AI startups with WeChat Pay and Alipay support, local-currency checkout, and USD settlement. Fees: WeChat 2.5%, Alipay 2.5%; Multiple withdrawal methods are available. Withdrawals to overseas company accounts incur a $20 fee, while USDT withdrawals incur a $30 fee plus a 0.4% transaction fee, settled in **USDT or USD**. No qualification review required — sign up and use immediately, making it the lowest barrier to entry. Withdrawal threshold is relatively high, recommended for users **who do not use domestic Chinese payment channels, cannot tolerate Stripe's 6%+ fees, have high transaction volume, and have USD or USDT channels to receive withdrawn funds**. Kyren Topup charges a $200 account opening fee; signing up via this link (which contains RelayDeck author [@Wei-Shaw](https://github.com/Wei-Shaw)'s referral code) **waives the opening fee**. Feel free to remove it if you prefer.
+> - **Domestic channel / CNY settlement** — verify that the provider supports
+>   the payment methods, settlement account type, and transaction limits you
+>   require before enabling it.
+> - **International channel / foreign-currency settlement** — verify supported
+>   payment methods, settlement routes, fees, withdrawal conditions, and any
+>   required business verification before enabling it.
 >
 > Please evaluate the security, reliability, and compliance of any third-party payment provider on your own — this project does not endorse or guarantee any of them.
 

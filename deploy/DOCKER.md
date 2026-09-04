@@ -68,24 +68,40 @@ volumes:
 Set `POSTGRES_PASSWORD` in a local `.env` file or the shell before running this
 example. Do not commit that secret.
 
-## Upgrade from a legacy `sub2api` database
+## Upgrade an existing PostgreSQL deployment
 
 `POSTGRES_DB` only initializes an empty PostgreSQL data volume; changing it does
-not rename an existing database. For a deployment whose retained volume contains
-`sub2api`, back it up and restore it into `relaydeck` before changing the
-application database name. Replace the role placeholders with the existing
-database role and an administrative role that may create databases:
+not rename an existing database or login role. Before changing the application
+database name, take a recoverable backup and use a PostgreSQL administrative
+session during a maintenance window. Stop the application first, then connect
+to a database other than the application database with an administrator role
+that is not the application login. Replace the example identifiers below before
+executing the SQL:
 
 ```bash
 docker compose stop relaydeck
-docker compose exec db pg_dump -U <existing-db-role> -Fc sub2api > sub2api.backup
-docker compose exec db createdb -U <existing-admin-role> -O <existing-db-role> relaydeck
-docker compose exec -T db pg_restore -U <existing-db-role> -d relaydeck --clean --if-exists < sub2api.backup
 ```
 
-After validating the restored data, set the application `DATABASE_DBNAME` (and
-the Compose `POSTGRES_DB` value for future empty-volume initialization) to
-`relaydeck`, then start the application again with `docker compose up -d relaydeck`.
+```sql
+ALTER ROLE existing_app_role RENAME TO relaydeck;
+ALTER DATABASE existing_database RENAME TO relaydeck;
+```
+
+The role rename preserves its role identifier, ownership, and grants; the
+database rename preserves its data. Do not treat `pg_dump`/`pg_restore` as a
+role migration: if a direct rename is unsuitable for your deployment, have a
+database administrator perform a separate, tested migration that recreates the
+required roles and grants.
+
+After validating the renamed database and login role, set the application
+`DATABASE_DBNAME` (and the Compose `POSTGRES_DB` value for future empty-volume
+initialization) to `relaydeck`, then start the application again with:
+
+```bash
+docker compose up -d relaydeck
+```
+
+This repository provides no automatic data migration.
 
 ## Startup and Database Recovery
 

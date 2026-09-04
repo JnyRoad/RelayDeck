@@ -7,7 +7,7 @@
 | 项目 | 说明 |
 |------|------|
 | **当前维护仓库** | JnyRoad/RelayDeck |
-| **上游来源仓库** | Wei-Shaw/sub2api |
+| **协作副本** | 各贡献者的个人 fork（如适用） |
 | **技术栈** | Go 后端 (Ent ORM + Gin) + Vue3 前端 (pnpm) |
 | **数据库** | PostgreSQL 16 + Redis |
 | **包管理** | 后端: go modules, 前端: **pnpm**（不是 npm） |
@@ -21,8 +21,10 @@
 | 端口 | 5432 |
 | psql 路径 | `C:\Program Files\PostgreSQL\16\bin\psql.exe` |
 | pg_hba.conf | `C:\Program Files\PostgreSQL\16\data\pg_hba.conf` |
-| 数据库凭据 | user=`relaydeck`, password=`<本地开发环境自行设置的密钥>`, dbname=`relaydeck` |
-| 超级用户 | user=`postgres`, password=`<PostgreSQL 安装时设置的密钥>` |
+| 数据库凭据 | user=`relaydeck`, password=`<DB_PASSWORD>`, dbname=`relaydeck` |
+| 超级用户 | user=`postgres`, password=`<POSTGRES_SUPERUSER_PASSWORD>` |
+
+> **已有部署的改名迁移**：本表仅用于新建本地环境。已有 PostgreSQL 数据目录中的数据库和登录角色不会因修改 `.env` 自动改名。修改配置前，必须完成可恢复备份，在维护窗口内将现有数据库和角色迁移为 `relaydeck`，再重建应用容器并验证连接；仓库不提供自动数据迁移。
 
 ### Redis
 
@@ -148,8 +150,8 @@ psql -f "C:\temp.sql"
 3. 无密码登录并重置
    ```bash
    psql -U postgres -h 127.0.0.1
-   ALTER USER relaydeck WITH PASSWORD '<本地开发环境自行设置的密钥>';
-   ALTER USER postgres WITH PASSWORD '<PostgreSQL 安装时设置的密钥>';
+   ALTER USER relaydeck WITH PASSWORD '<DB_PASSWORD>';
+   ALTER USER postgres WITH PASSWORD '<POSTGRES_SUPERUSER_PASSWORD>';
    ```
 4. 改回 `scram-sha-256` 并重启
 
@@ -340,7 +342,6 @@ relaydeck-bmai/
 
 ## 七、参考资源
 
-- [上游来源仓库](https://github.com/Wei-Shaw/sub2api)
 - [当前维护仓库](https://github.com/JnyRoad/RelayDeck)
 - [Ent 文档](https://entgo.io/docs/getting-started)
 - [Vue3 文档](https://vuejs.org/)

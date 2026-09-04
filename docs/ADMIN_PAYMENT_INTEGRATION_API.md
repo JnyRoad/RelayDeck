@@ -37,7 +37,7 @@
 请求体示例：
 ```json
 {
-  "code": "s2p_cm1234567890",
+  "code": "rd_cm1234567890",
   "type": "balance",
   "value": 100.0,
   "user_id": 123,
@@ -57,7 +57,7 @@ curl -X POST "${BASE}/api/v1/admin/redeem-codes/create-and-redeem" \
   -H "Idempotency-Key: pay-cm1234567890-success" \
   -H "Content-Type: application/json" \
   -d '{
-    "code":"s2p_cm1234567890",
+    "code":"rd_cm1234567890",
     "type":"balance",
     "value":100.00,
     "user_id":123,
@@ -157,7 +157,7 @@ Headers:
 Request body:
 ```json
 {
-  "code": "s2p_cm1234567890",
+  "code": "rd_cm1234567890",
   "type": "balance",
   "value": 100.0,
   "user_id": 123,
@@ -177,7 +177,7 @@ curl -X POST "${BASE}/api/v1/admin/redeem-codes/create-and-redeem" \
   -H "Idempotency-Key: pay-cm1234567890-success" \
   -H "Content-Type: application/json" \
   -d '{
-    "code":"s2p_cm1234567890",
+    "code":"rd_cm1234567890",
     "type":"balance",
     "value":100.00,
     "user_id":123,

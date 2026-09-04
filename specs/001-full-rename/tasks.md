@@ -90,7 +90,7 @@ environment, storage, and protocol identifiers.
 
 - [X] T012 [US3] Rewrite owned identity values, generated configuration, UI
   defaults, i18n text, tests, and package metadata in `frontend/`.
-- [ ] T013 [US3] Run focused generated-client tests in
+- [X] T013 [US3] Run focused generated-client tests in
   `frontend/src/components/keys/__tests__/UseKeyModal.spec.ts` and update any
   relay-specific expectations.
 - [X] T014 [US3] Replace product-owned former-name URLs in `frontend/src/` with
@@ -109,15 +109,15 @@ RelayDeck-only.
 - [X] T015 Run the case-insensitive tracked-code scan defined in
   `specs/001-full-rename/quickstart.md` and resolve every in-scope match.
 - [X] T016 Run `go test ./...` and `go build ./cmd/server` from `backend/`.
-- [ ] T017 Run `pnpm --dir frontend run typecheck` and
+- [X] T017 Run `pnpm --dir frontend run typecheck` and
   `pnpm --dir frontend run build`.
 - [X] T018 Run `git diff --check`, confirm changed legacy-named paths are gone,
   and document any unverified Docker registry or DNS state in
   `specs/001-full-rename/quickstart.md`.
-- [ ] T019 After T013 and T017, rewrite the remaining documentation, legal,
-  historical, and fixture references under the user-authorized full-repository
-  scope; neutralize third-party brands and referral codes without inventing
-  replacements; then run a zero-legacy-token scan.
+- [X] T019 Rewrite the remaining documentation, legal, historical, and fixture
+  references under the user-authorized full-repository scope; neutralize
+  third-party brands and referral codes without inventing replacements; run a
+  zero-legacy-token scan.
 
 ## Dependencies & Execution Order
 

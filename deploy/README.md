@@ -90,6 +90,12 @@ docker compose -f docker-compose.local.yml logs relaydeck | grep "admin password
 
 If you prefer manual control:
 
+> **Existing deployment rename required:** These instructions create a fresh
+> environment. Changing `.env` does not rename an existing PostgreSQL database
+> or login role. Take a recoverable backup, perform the database and role rename
+> to `relaydeck` during a maintenance window, then recreate and verify the
+> application container. This repository provides no automatic data migration.
+
 ```bash
 # Clone repository
 git clone https://github.com/JnyRoad/RelayDeck.git
