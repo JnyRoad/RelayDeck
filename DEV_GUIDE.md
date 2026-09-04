@@ -24,6 +24,8 @@
 | 数据库凭据 | user=`relaydeck`, password=`<DB_PASSWORD>`, dbname=`relaydeck` |
 | 超级用户 | user=`postgres`, password=`<POSTGRES_SUPERUSER_PASSWORD>` |
 
+> **已有部署的改名迁移**：本表仅用于新建本地环境。已有 PostgreSQL 数据目录中的数据库和登录角色不会因修改 `.env` 自动改名。修改配置前，必须完成可恢复备份，在维护窗口内将现有数据库和角色迁移为 `relaydeck`，再重建应用容器并验证连接；仓库不提供自动数据迁移。
+
 ### Redis
 
 | 配置项 | 值 |

@@ -39,7 +39,8 @@
 - **数据库**：新增 `prompt_audit_jobs`、`prompt_audit_events` 和相应索引；配置存入现有 `settings`，API Key 加密保存；不修改现有内容审核表。
 - **Redis**：新增短 TTL 提示词载荷和配置失效通知 key/channel；Redis 不可用时异步 Worker 必须显式降级或报错，不得伪装健康。
 - **前端**：新增 `frontend/src/features/prompt-audit/`，少量修改路由、侧栏和 i18n；原 `RiskControlView.vue` 业务逻辑保持不变。
-- **兼容性**：没有外部 API breaking change；新能力默认关闭。只有管理员显式开启同步阻止后，适用请求才可能新增 403/503 或 WebSocket 4403/1013 响应。
+- **兼容性**：新能力默认关闭。只有管理员显式开启同步阻止后，适用请求才可能新增 403/503 或 WebSocket 4403/1013 响应。身份改名还会使 Gemini `ErrorInfo.domain` 使用 RelayDeck 值；将其加入 allowlist 或 golden assertion 的客户端必须在升级前更新预期，这是一次外部协议 breaking change。
+- **迁移**：不提供双标识兼容层。客户端和插件发布者应在升级前更新协议断言、golden 测试与打包产物，再切换到 RelayDeck 版本。
 - **安全与隐私**：完整提示词只允许存在于请求内存和 Redis 短 TTL 载荷，不得进入 PostgreSQL、日志、管理 API、前端状态或错误响应；审计节点凭据必须使用现有 SecretEncryptor 加密。
 - **实施基线风险**：参考仓库当前 `yjb` 分支包含未提交的同步阻止相关改动。开始编码前必须固定源 commit/tag 或保存可审计 diff，避免“完整迁移”范围漂移。
 

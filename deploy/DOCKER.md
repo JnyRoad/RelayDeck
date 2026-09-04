@@ -68,24 +68,26 @@ volumes:
 Set `POSTGRES_PASSWORD` in a local `.env` file or the shell before running this
 example. Do not commit that secret.
 
-## Upgrade from a legacy `sub2api` database
+## Upgrade an existing PostgreSQL deployment
 
 `POSTGRES_DB` only initializes an empty PostgreSQL data volume; changing it does
-not rename an existing database. For a deployment whose retained volume contains
-`sub2api`, back it up and restore it into `relaydeck` before changing the
-application database name. Replace the role placeholders with the existing
-database role and an administrative role that may create databases:
+not rename an existing database or login role. Before changing the application
+database name, take a recoverable backup and use a PostgreSQL administrative
+session during a maintenance window to migrate both the retained database and
+its application login role to `relaydeck`. Replace the placeholders below with
+the current database and administrative roles:
 
 ```bash
 docker compose stop relaydeck
-docker compose exec db pg_dump -U <existing-db-role> -Fc sub2api > sub2api.backup
-docker compose exec db createdb -U <existing-admin-role> -O <existing-db-role> relaydeck
-docker compose exec -T db pg_restore -U <existing-db-role> -d relaydeck --clean --if-exists < sub2api.backup
+docker compose exec db pg_dump -U <existing-db-role> -Fc <existing-database> > existing-database.backup
+docker compose exec db createdb -U <existing-admin-role> -O relaydeck relaydeck
+docker compose exec -T db pg_restore -U relaydeck -d relaydeck --clean --if-exists < existing-database.backup
 ```
 
-After validating the restored data, set the application `DATABASE_DBNAME` (and
-the Compose `POSTGRES_DB` value for future empty-volume initialization) to
-`relaydeck`, then start the application again with `docker compose up -d relaydeck`.
+After validating the restored data and renamed login role, set the application
+`DATABASE_DBNAME` (and the Compose `POSTGRES_DB` value for future empty-volume
+initialization) to `relaydeck`, then start the application again with `docker
+compose up -d relaydeck`. This repository provides no automatic data migration.
 
 ## Startup and Database Recovery
 

@@ -22,8 +22,8 @@ ui/assets/...
 
 - `version`：插件自身语义化版本。
 - `requires.relaydeck`：宿主硬兼容范围。
-- `recommended_relaydeck_version`：建议宿主版本。
-- `tested_relaydeck_versions`：发布者真实验证过的版本。
+- `requires.recommended_relaydeck_version`：建议宿主版本。
+- `requires.tested_relaydeck_versions`：发布者真实验证过的版本。
 - `plugin_protocol`：进程握手协议。
 - `transport_api`：请求和响应帧协议。
 - `ui_bridge`：配置 UI 消息协议。
