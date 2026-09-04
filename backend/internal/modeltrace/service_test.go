@@ -3,6 +3,7 @@ package modeltrace
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -22,6 +23,7 @@ func (s traceConfigStoreStub) Load(context.Context) (TraceConfig, error) {
 // traceRepositoryStub captures persistence requests so tests assert observable
 // stored values instead of internal implementation details.
 type traceRepositoryStub struct {
+	mu              sync.Mutex
 	traces          []TraceRecord
 	payloads        []PayloadRecord
 	chunkedPayloads []PayloadRecord
@@ -48,12 +50,16 @@ func (rejectingPayloadPersistenceScheduler) Enqueue(func()) bool { return false 
 
 // CreateTrace records a header creation request without database I/O.
 func (s *traceRepositoryStub) CreateTrace(_ context.Context, record TraceRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.traces = append(s.traces, record)
 	return nil
 }
 
 // CreatePayload records a prepared encrypted payload without database I/O.
 func (s *traceRepositoryStub) CreatePayload(_ context.Context, record PayloadRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.payloads = append(s.payloads, record)
 	return nil
 }
@@ -61,6 +67,8 @@ func (s *traceRepositoryStub) CreatePayload(_ context.Context, record PayloadRec
 // CreateChunkedPayload records the metadata row that owns a sequence of
 // encrypted chunks and returns a deterministic test-only primary key.
 func (s *traceRepositoryStub) CreateChunkedPayload(_ context.Context, record PayloadRecord) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.chunkedPayloads = append(s.chunkedPayloads, record)
 	return int64(len(s.chunkedPayloads)), nil
 }
@@ -68,6 +76,8 @@ func (s *traceRepositoryStub) CreateChunkedPayload(_ context.Context, record Pay
 // AppendPayloadChunk records one encrypted segment in its caller-supplied
 // order so the service test can verify a full payload is split predictably.
 func (s *traceRepositoryStub) AppendPayloadChunk(_ context.Context, payloadID int64, chunkNo int, ciphertext string, storedBytes int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.chunks = append(s.chunks, tracePayloadChunkStub{payloadID: payloadID, chunkNo: chunkNo, ciphertext: ciphertext, storedBytes: storedBytes})
 	return nil
 }
@@ -75,6 +85,8 @@ func (s *traceRepositoryStub) AppendPayloadChunk(_ context.Context, payloadID in
 // FinishChunkedPayload records the final aggregate metadata for the chunked
 // body without requiring a real storage adapter.
 func (s *traceRepositoryStub) FinishChunkedPayload(_ context.Context, payloadID int64, record PayloadRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if payloadID < 1 || int(payloadID) > len(s.chunkedPayloads) {
 		return nil
 	}
@@ -82,8 +94,18 @@ func (s *traceRepositoryStub) FinishChunkedPayload(_ context.Context, payloadID 
 	return nil
 }
 
+// snapshotChunkedPayloads returns a stable test-only copy while asynchronous
+// payload persistence may still be finalizing a stream in another goroutine.
+func (s *traceRepositoryStub) snapshotChunkedPayloads() []PayloadRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]PayloadRecord(nil), s.chunkedPayloads...)
+}
+
 // FinishTrace records terminal call metadata without database I/O.
 func (s *traceRepositoryStub) FinishTrace(_ context.Context, record TraceFinishRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.finishes = append(s.finishes, record)
 	return nil
 }
@@ -385,13 +407,18 @@ func TestChunkedPayloadStreamFinalizesDeliveredMetadata(t *testing.T) {
 	}
 
 	deadline := time.Now().Add(time.Second)
-	for len(repository.chunkedPayloads) != 1 || repository.chunkedPayloads[0].CaptureStatus != CaptureStatusComplete {
+	var stored PayloadRecord
+	for {
+		payloads := repository.snapshotChunkedPayloads()
+		if len(payloads) == 1 && payloads[0].CaptureStatus == CaptureStatusComplete {
+			stored = payloads[0]
+			break
+		}
 		if time.Now().After(deadline) {
-			t.Fatalf("finalized chunked payloads=%#v", repository.chunkedPayloads)
+			t.Fatalf("finalized chunked payloads=%#v", payloads)
 		}
 		time.Sleep(time.Millisecond)
 	}
-	stored := repository.chunkedPayloads[0]
 	if stored.Kind != PayloadKindErrorResponse || stored.ContentType != "application/json" {
 		t.Fatalf("finalized metadata=%#v, want error JSON", stored)
 	}

@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -201,15 +202,41 @@ func TestModelTraceHandlerConversationParsesReplayCursor(t *testing.T) {
 	router := gin.New()
 	router.GET("/admin/model-traces/:traceID/conversation", handler.Conversation)
 
-	request := httptest.NewRequest(http.MethodGet, "/admin/model-traces/trace-current/conversation?direction=older&cursor=opaque-cursor&limit=500", nil)
+	cursor := base64.RawURLEncoding.EncodeToString([]byte(`{"created_at":"2026-09-03T12:00:00Z","trace_id":"trace-previous"}`))
+	request := httptest.NewRequest(http.MethodGet, "/admin/model-traces/trace-current/conversation?direction=older&cursor="+cursor+"&limit=500", nil)
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("conversation response status=%d body=%s", response.Code, response.Body.String())
 	}
-	if repository.pageRequest.Direction != "older" || repository.pageRequest.Cursor != "opaque-cursor" || repository.pageRequest.Limit != 50 {
+	if repository.pageRequest.Direction != "older" || repository.pageRequest.Cursor != cursor || repository.pageRequest.Limit != 50 {
 		t.Fatalf("page request=%#v", repository.pageRequest)
+	}
+}
+
+// TestModelTraceHandlerConversationRejectsMalformedReplayPages ensures cursor
+// validation failures remain client errors instead of becoming unknown 500s.
+func TestModelTraceHandlerConversationRejectsMalformedReplayPages(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, rawQuery := range []string{
+		"direction=sideways&cursor=opaque",
+		"direction=older",
+		"cursor=opaque",
+		"direction=older&cursor=opaque",
+	} {
+		repository := &modelTraceQueryRepositoryStub{}
+		handler := newModelTraceHandlerForTest(repository)
+		router := gin.New()
+		router.GET("/admin/model-traces/:traceID/conversation", handler.Conversation)
+
+		request := httptest.NewRequest(http.MethodGet, "/admin/model-traces/trace-current/conversation?"+rawQuery, nil)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("query %q response status=%d body=%s, want 400", rawQuery, response.Code, response.Body.String())
+		}
 	}
 }
 

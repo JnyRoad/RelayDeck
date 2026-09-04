@@ -294,6 +294,22 @@ func normalizeConversationPageRequest(page ConversationPageRequest) (Conversatio
 	return page, nil
 }
 
+// ValidateConversationPageRequest normalizes one public replay-page request
+// and verifies that any opaque cursor was issued by this service before an HTTP
+// handler forwards it to a repository implementation.
+func ValidateConversationPageRequest(page ConversationPageRequest) (ConversationPageRequest, error) {
+	normalizedPage, err := normalizeConversationPageRequest(page)
+	if err != nil {
+		return ConversationPageRequest{}, err
+	}
+	if normalizedPage.Cursor != "" {
+		if _, err := decodeConversationCursor(normalizedPage.Cursor); err != nil {
+			return ConversationPageRequest{}, err
+		}
+	}
+	return normalizedPage, nil
+}
+
 // Payload returns the first bounded page of one administrator-selected body.
 // Callers with a continuation cursor must use PayloadPage instead.
 func (s *QueryService) Payload(ctx context.Context, traceID string, kind PayloadKind, attemptNo int) (TracePayload, error) {

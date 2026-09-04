@@ -30,6 +30,7 @@
         <div v-if="conversation.older_cursor" class="flex justify-center">
           <button data-testid="model-trace-load-older" type="button" class="trace-load-more" :disabled="loadingConversationPage" @click="loadConversationPage('older')">{{ t('admin.modelTrace.detail.loadOlder') }}</button>
         </div>
+        <p v-if="conversationPageError" data-testid="model-trace-conversation-page-error" class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">{{ conversationPageError }}</p>
         <article v-for="turn in conversation.turns" :key="turn.trace.trace_id" :data-testid="`trace-chat-turn-${turn.trace.trace_id}`" :class="['trace-chat-turn space-y-3 rounded-xl border p-3', turn.trace.trace_id === conversation.current_trace_id ? 'trace-current-turn border-teal-400/70 bg-teal-50/70 ring-1 ring-teal-200 dark:border-teal-700 dark:bg-teal-950/20 dark:ring-teal-900' : 'border-transparent bg-white/70 dark:bg-dark-800/70']">
           <div class="flex items-center justify-between gap-3 text-xs text-slate-500 dark:text-slate-400">
             <span class="font-mono">{{ turn.trace.trace_id }}</span>
@@ -82,6 +83,7 @@ const activeView = ref<'chat' | 'raw'>('chat')
 const contents = ref<Record<string, ModelTracePayload>>({})
 const payloadErrorKeys = ref<Record<string, true>>({})
 const loadingConversationPage = ref(false)
+const conversationPageError = ref('')
 let loadVersion = 0
 
 /** Derive a stable browser-only lookup key for one selected trace payload. */
@@ -168,6 +170,7 @@ const loadConversationPage = async (direction: 'older' | 'newer') => {
   const cursor = direction === 'older' ? current.older_cursor : current.newer_cursor
   if (!cursor) return
   const version = loadVersion
+  conversationPageError.value = ''
   loadingConversationPage.value = true
   try {
     const result = await modelTraceAPI.getConversation(props.traceId, { direction, cursor, limit: 50 })
@@ -179,7 +182,7 @@ const loadConversationPage = async (direction: 'older' | 'newer') => {
       newer_cursor: direction === 'newer' ? result.newer_cursor : conversation.value.newer_cursor,
     }
   } catch {
-    if (version === loadVersion) errorMessage.value = t('admin.modelTrace.errors.detail')
+    if (version === loadVersion) conversationPageError.value = t('admin.modelTrace.errors.detail')
   } finally {
     if (version === loadVersion) loadingConversationPage.value = false
   }
@@ -195,6 +198,7 @@ const loadConversation = async () => {
   contents.value = {}
   payloadErrorKeys.value = {}
   loadingConversationPage.value = false
+  conversationPageError.value = ''
   activeView.value = 'chat'
   try {
     const result = await modelTraceAPI.getConversation(props.traceId)
@@ -234,6 +238,7 @@ const close = () => {
   contents.value = {}
   payloadErrorKeys.value = {}
   loadingConversationPage.value = false
+  conversationPageError.value = ''
   emit('close')
 }
 

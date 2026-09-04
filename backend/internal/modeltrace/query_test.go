@@ -125,6 +125,34 @@ func TestQueryServiceHidesDecryptionFailure(t *testing.T) {
 	}
 }
 
+// TestConversationHydrationSkipsDeletedTraceIDs keeps a page usable when a
+// selected trace disappears after its bounded position query but before batch
+// hydration completes.
+func TestConversationHydrationSkipsDeletedTraceIDs(t *testing.T) {
+	turns := orderedConversationTurns([]string{"trace-first", "trace-deleted", "trace-last"}, map[string]*TraceDetail{
+		"trace-first": {Trace: TraceSummary{TraceID: "trace-first"}},
+		"trace-last":  {Trace: TraceSummary{TraceID: "trace-last"}},
+	})
+	if len(turns) != 2 || turns[0].Trace.TraceID != "trace-first" || turns[1].Trace.TraceID != "trace-last" {
+		t.Fatalf("hydrated turns=%#v, want surviving trace IDs in requested order", turns)
+	}
+}
+
+// TestConversationPageCursorsFallBackToPositions preserves a usable paging
+// anchor when every selected trace is deleted before metadata hydration.
+func TestConversationPageCursorsFallBackToPositions(t *testing.T) {
+	positions := []conversationCursor{
+		{CreatedAt: time.Date(2026, time.September, 3, 12, 0, 0, 0, time.UTC), TraceID: "trace-first"},
+		{CreatedAt: time.Date(2026, time.September, 3, 12, 1, 0, 0, time.UTC), TraceID: "trace-last"},
+	}
+	older, newer := conversationPageCursors(nil, positions, true, true)
+	decodedOlder, olderErr := decodeConversationCursor(older)
+	decodedNewer, newerErr := decodeConversationCursor(newer)
+	if olderErr != nil || newerErr != nil || decodedOlder.TraceID != "trace-first" || decodedNewer.TraceID != "trace-last" {
+		t.Fatalf("fallback cursors older=(%#v, %v) newer=(%#v, %v)", decodedOlder, olderErr, decodedNewer, newerErr)
+	}
+}
+
 // TestQueryServiceReturnsSafeDecryptedContent 验证已通过入库前脱敏的正文可在详情中按需呈现。
 func TestQueryServiceReturnsSafeDecryptedContent(t *testing.T) {
 	service := NewQueryService(traceQueryRepositoryStub{payload: TracePayload{

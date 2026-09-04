@@ -375,7 +375,7 @@ func (r *PostgresRepository) GetConversationPage(ctx context.Context, traceID st
 		return TraceConversation{}, loadErr
 	}
 	conversation.Turns = turns
-	conversation.OlderCursor, conversation.NewerCursor = conversationPageCursors(turns, hasOlder, hasNewer)
+	conversation.OlderCursor, conversation.NewerCursor = conversationPageCursors(turns, positions, hasOlder, hasNewer)
 	return conversation, nil
 }
 
@@ -438,17 +438,26 @@ func minConversationCount(left, right int) int {
 }
 
 // conversationPageCursors emits only cursors for adjacent pages proven to
-// exist, using the first and last rendered turns as directional anchors.
-func conversationPageCursors(turns []TraceDetail, hasOlder, hasNewer bool) (string, string) {
-	if len(turns) == 0 {
+// exist. It uses the first and last rendered turns, or the selected SQL
+// positions when concurrent deletion leaves a page with no surviving headers.
+func conversationPageCursors(turns []TraceDetail, positions []conversationCursor, hasOlder, hasNewer bool) (string, string) {
+	if len(turns) == 0 && len(positions) == 0 {
 		return "", ""
+	}
+	olderAnchor, newerAnchor := conversationCursor{}, conversationCursor{}
+	if len(turns) > 0 {
+		olderAnchor = conversationCursor{CreatedAt: turns[0].Trace.CreatedAt, TraceID: turns[0].Trace.TraceID}
+		newerAnchor = conversationCursor{CreatedAt: turns[len(turns)-1].Trace.CreatedAt, TraceID: turns[len(turns)-1].Trace.TraceID}
+	} else {
+		olderAnchor = positions[0]
+		newerAnchor = positions[len(positions)-1]
 	}
 	var olderCursor, newerCursor string
 	if hasOlder {
-		olderCursor, _ = encodeConversationCursor(conversationCursor{CreatedAt: turns[0].Trace.CreatedAt, TraceID: turns[0].Trace.TraceID})
+		olderCursor, _ = encodeConversationCursor(olderAnchor)
 	}
 	if hasNewer {
-		newerCursor, _ = encodeConversationCursor(conversationCursor{CreatedAt: turns[len(turns)-1].Trace.CreatedAt, TraceID: turns[len(turns)-1].Trace.TraceID})
+		newerCursor, _ = encodeConversationCursor(newerAnchor)
 	}
 	return olderCursor, newerCursor
 }
@@ -648,15 +657,19 @@ func (r *PostgresRepository) loadConversationTurns(ctx context.Context, traceIDs
 	if err := payloadRows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate model trace conversation payloads: %w", err)
 	}
+	return orderedConversationTurns(traceIDs, byTraceID), nil
+}
+
+// orderedConversationTurns preserves the selected chronological order while
+// skipping traces deleted between the bounded position query and hydration.
+func orderedConversationTurns(traceIDs []string, byTraceID map[string]*TraceDetail) []TraceDetail {
 	turns := make([]TraceDetail, 0, len(traceIDs))
 	for _, traceID := range traceIDs {
-		detail := byTraceID[traceID]
-		if detail == nil {
-			return nil, infraerrors.NotFound("MODEL_TRACE_NOT_FOUND", "model trace not found")
+		if detail := byTraceID[traceID]; detail != nil {
+			turns = append(turns, *detail)
 		}
-		turns = append(turns, *detail)
 	}
-	return turns, nil
+	return turns
 }
 
 // modelTraceWhere 将允许的筛选字段转换为参数化 SQL，调用方永不拼接客户端输入。

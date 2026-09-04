@@ -111,7 +111,12 @@ func parseModelTraceConversationPage(c *gin.Context) (modeltrace.ConversationPag
 		}
 		page.Limit = limit
 	}
-	return page, true
+	normalizedPage, err := modeltrace.ValidateConversationPageRequest(page)
+	if err != nil {
+		response.BadRequest(c, "Invalid conversation page")
+		return modeltrace.ConversationPageRequest{}, false
+	}
+	return normalizedPage, true
 }
 
 // Payload 返回管理员明确选中的一种已加密正文，避免详情页一次读取全部密文。

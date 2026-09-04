@@ -113,6 +113,24 @@ describe('ModelTraceDetailDialog', () => {
     expect(wrapper.get('[data-testid="trace-chat-turn-trace-next"]').exists()).toBe(true)
   })
 
+  it('keeps loaded replay turns visible when adjacent-page loading fails', async () => {
+    getConversation.mockReset()
+      .mockResolvedValueOnce({
+        current_trace_id: 'trace-current', linked: true, link_source: 'session_id', newer_cursor: 'newer-cursor',
+        turns: [{ trace: { trace_id: 'trace-current' }, payloads: [] }],
+      })
+      .mockRejectedValueOnce(new Error('adjacent page request failed'))
+    const wrapper = mountDialog('trace-current')
+    await flushPromises()
+
+    await wrapper.get('[data-testid="model-trace-load-newer"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="model-trace-chat-scroll"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="trace-chat-turn-trace-current"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="model-trace-conversation-page-error"]').text()).toContain('admin.modelTrace.errors.detail')
+  })
+
   it('appends a selected body continuation without replacing its loaded prefix', async () => {
     getConversation.mockResolvedValueOnce({
       current_trace_id: 'trace-body', linked: false, link_source: '',
