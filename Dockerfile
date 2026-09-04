@@ -70,8 +70,9 @@ RUN apk add --no-cache git ca-certificates tzdata
 
 WORKDIR /app/backend
 
-# Copy go mod files first (better caching)
+# Copy module manifests first so local replacements resolve during dependency download.
 COPY backend/go.mod backend/go.sum ./
+COPY backend/third_party/coder-websocket/go.mod backend/third_party/coder-websocket/go.sum ./third_party/coder-websocket/
 # Cache mount keeps the module cache across builds so a transient CDN blip on
 # retry resumes instead of re-fetching every zip from scratch.
 RUN --mount=type=cache,id=relaydeck-gomod,target=/go/pkg/mod \
