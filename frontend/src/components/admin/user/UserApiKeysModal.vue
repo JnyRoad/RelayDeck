@@ -60,7 +60,7 @@ const adapter = computed<KeyManagementAdapter | null>(() => {
     delete: (keyID) => deleteUserApiKey(userID, keyID),
     getAvailableGroups: () => getUserApiKeyAvailableGroups(userID),
     getUserGroupRates: () => getUserApiKeyGroupRates(userID),
-    getUsageStats: (apiKeyIDs) => getBatchApiKeysUsage(apiKeyIDs),
+    getUsageStats: (apiKeyIDs, options) => getBatchApiKeysUsage(apiKeyIDs, userID, options),
   }
 })
 </script>

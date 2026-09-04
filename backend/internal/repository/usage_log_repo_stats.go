@@ -548,9 +548,9 @@ func (r *usageLogRepository) GetBatchUserUsageStats(ctx context.Context, userIDs
 // BatchAPIKeyUsageStats represents usage stats for a single API key
 type BatchAPIKeyUsageStats = usagestats.BatchAPIKeyUsageStats
 
-// GetBatchAPIKeyUsageStats gets today and total actual_cost for multiple API keys within a time range.
+// GetBatchAPIKeyUsageStats gets today and total actual_cost for multiple API keys within a time range and optional user scope.
 // If startTime is zero, defaults to 30 days ago.
-func (r *usageLogRepository) GetBatchAPIKeyUsageStats(ctx context.Context, apiKeyIDs []int64, startTime, endTime time.Time) (map[int64]*BatchAPIKeyUsageStats, error) {
+func (r *usageLogRepository) GetBatchAPIKeyUsageStats(ctx context.Context, apiKeyIDs []int64, userID int64, startTime, endTime time.Time) (map[int64]*BatchAPIKeyUsageStats, error) {
 	result := make(map[int64]*BatchAPIKeyUsageStats)
 	normalizedAPIKeyIDs := normalizePositiveInt64IDs(apiKeyIDs)
 	if len(normalizedAPIKeyIDs) == 0 {
@@ -571,16 +571,18 @@ func (r *usageLogRepository) GetBatchAPIKeyUsageStats(ctx context.Context, apiKe
 
 	query := `
 		SELECT
-			api_key_id,
-			COALESCE(SUM(actual_cost) FILTER (WHERE created_at >= $2 AND created_at < $3), 0) as total_cost,
-			COALESCE(SUM(actual_cost) FILTER (WHERE created_at >= $4), 0) as today_cost
+			usage_logs.api_key_id,
+			COALESCE(SUM(usage_logs.actual_cost) FILTER (WHERE usage_logs.created_at >= $2 AND usage_logs.created_at < $3), 0) as total_cost,
+			COALESCE(SUM(usage_logs.actual_cost) FILTER (WHERE usage_logs.created_at >= $4), 0) as today_cost
 		FROM usage_logs
-		WHERE api_key_id = ANY($1)
-		  AND created_at >= LEAST($2, $4)
-		GROUP BY api_key_id
+		JOIN api_keys ON api_keys.id = usage_logs.api_key_id
+		WHERE usage_logs.api_key_id = ANY($1)
+		  AND usage_logs.created_at >= LEAST($2, $4)
+		  AND ($5 = 0 OR api_keys.user_id = $5)
+		GROUP BY usage_logs.api_key_id
 	`
 	today := timezone.Today()
-	rows, err := r.sql.QueryContext(ctx, query, pq.Array(normalizedAPIKeyIDs), startTime, endTime, today)
+	rows, err := r.sql.QueryContext(ctx, query, pq.Array(normalizedAPIKeyIDs), startTime, endTime, today, userID)
 	if err != nil {
 		return nil, err
 	}

@@ -76,6 +76,30 @@ func NewUserHandler(
 	}
 }
 
+// ProvideUserHandler constructs the administrator user handler with the Key capability required by target-user routes.
+func ProvideUserHandler(
+	adminService service.AdminService,
+	concurrencyService *service.ConcurrencyService,
+	userPlatformQuotaRepo service.UserPlatformQuotaRepository,
+	billingCache service.BillingCache,
+	totpService *service.TotpService,
+	userService *service.UserService,
+	settingService *service.SettingService,
+	apiKeyService *service.APIKeyService,
+) *UserHandler {
+	handler := NewUserHandler(
+		adminService,
+		concurrencyService,
+		userPlatformQuotaRepo,
+		billingCache,
+		totpService,
+		userService,
+		settingService,
+	)
+	handler.SetAPIKeyManager(apiKeyService)
+	return handler
+}
+
 // CreateUserRequest represents admin create user request
 type CreateUserRequest struct {
 	Email                string   `json:"email" binding:"required,email"`
@@ -494,8 +518,8 @@ func (h *UserHandler) requireAPIKeyManager(c *gin.Context) (targetUserAPIKeyMana
 func parseUserAPIKeyFilters(c *gin.Context) service.APIKeyListFilters {
 	var filters service.APIKeyListFilters
 	if search := strings.TrimSpace(c.Query("search")); search != "" {
-		if len(search) > 100 {
-			search = search[:100]
+		if runes := []rune(search); len(runes) > 100 {
+			search = string(runes[:100])
 		}
 		filters.Search = search
 	}
@@ -538,23 +562,12 @@ func (h *UserHandler) GetUserAPIKeys(c *gin.Context) {
 	if !ok {
 		return
 	}
-	page, pageSize := response.ParsePagination(c)
-	middleware.SetAuditExtra(c, map[string]any{"target_user_id": userID})
-
-	if h.apiKeyManager == nil {
-		// Keep the existing handler usable for legacy tests and partially constructed local handlers.
-		keys, total, err := h.adminService.GetUserAPIKeys(c.Request.Context(), userID, page, pageSize, c.DefaultQuery("sort_by", "created_at"), c.DefaultQuery("sort_order", "desc"))
-		if err != nil {
-			response.ErrorFrom(c, err)
-			return
-		}
-		out := make([]dto.APIKey, 0, len(keys))
-		for i := range keys {
-			out = append(out, *dto.APIKeyFromService(&keys[i]))
-		}
-		response.Paginated(c, out, total, page, pageSize)
+	manager, ok := h.requireAPIKeyManager(c)
+	if !ok {
 		return
 	}
+	page, pageSize := response.ParsePagination(c)
+	middleware.SetAuditExtra(c, map[string]any{"target_user_id": userID})
 
 	params := pagination.PaginationParams{
 		Page:      page,
@@ -562,7 +575,7 @@ func (h *UserHandler) GetUserAPIKeys(c *gin.Context) {
 		SortBy:    c.DefaultQuery("sort_by", "created_at"),
 		SortOrder: c.DefaultQuery("sort_order", "desc"),
 	}
-	keys, result, err := h.apiKeyManager.List(c.Request.Context(), userID, params, parseUserAPIKeyFilters(c))
+	keys, result, err := manager.List(c.Request.Context(), userID, params, parseUserAPIKeyFilters(c))
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

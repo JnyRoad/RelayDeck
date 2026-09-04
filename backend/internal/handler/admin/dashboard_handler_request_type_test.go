@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -28,6 +29,8 @@ type dashboardUsageRepoCapture struct {
 	rankingLimit          int
 	ranking               []usagestats.UserSpendingRankingItem
 	rankingTotal          float64
+	batchAPIKeyIDs        []int64
+	batchTargetUserID     int64
 }
 
 func (s *dashboardUsageRepoCapture) GetUsageTrendWithUsageFilters(
@@ -108,6 +111,19 @@ func (s *dashboardUsageRepoCapture) GetUserSpendingRanking(
 	}, nil
 }
 
+// GetBatchAPIKeyUsageStats captures the ownership scope used for a dashboard Key usage query.
+func (s *dashboardUsageRepoCapture) GetBatchAPIKeyUsageStats(
+	_ context.Context,
+	apiKeyIDs []int64,
+	userID int64,
+	_ time.Time,
+	_ time.Time,
+) (map[int64]*usagestats.BatchAPIKeyUsageStats, error) {
+	s.batchAPIKeyIDs = apiKeyIDs
+	s.batchTargetUserID = userID
+	return map[int64]*usagestats.BatchAPIKeyUsageStats{}, nil
+}
+
 func newDashboardRequestTypeTestRouter(repo *dashboardUsageRepoCapture) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	dashboardSvc := service.NewDashboardService(repo, nil, nil, nil)
@@ -117,7 +133,27 @@ func newDashboardRequestTypeTestRouter(repo *dashboardUsageRepoCapture) *gin.Eng
 	router.GET("/admin/dashboard/models", handler.GetModelStats)
 	router.GET("/admin/dashboard/groups", handler.GetGroupStats)
 	router.GET("/admin/dashboard/users-ranking", handler.GetUserSpendingRanking)
+	router.POST("/admin/dashboard/api-keys-usage", handler.GetBatchAPIKeysUsage)
 	return router
+}
+
+// TestDashboardAPIKeysUsageForwardsTargetUserScope prevents a modal request from reading another user's Key usage.
+func TestDashboardAPIKeysUsageForwardsTargetUserScope(t *testing.T) {
+	repo := &dashboardUsageRepoCapture{}
+	router := newDashboardRequestTypeTestRouter(repo)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/admin/dashboard/api-keys-usage",
+		bytes.NewBufferString(`{"api_key_ids":[31],"target_user_id":42}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, []int64{31}, repo.batchAPIKeyIDs)
+	require.Equal(t, int64(42), repo.batchTargetUserID)
 }
 
 func TestDashboardTrendRequestTypePriority(t *testing.T) {

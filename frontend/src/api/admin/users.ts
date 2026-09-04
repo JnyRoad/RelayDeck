@@ -257,9 +257,32 @@ export async function listUserApiKeys(
   return data
 }
 
-/** Create a Key owned by the explicit target user. */
+// Keep one key per unchanged in-memory create submission. The payload remains only in
+// memory so a custom Key is never copied into browser storage or an idempotency header.
+const userAPIKeyCreateOperationKeys = new Map<string, string>()
+
+function userAPIKeyCreateOperationScope(userID: number, payload: CreateApiKeyRequest): string {
+  const canonicalPayload = Object.entries(payload).sort(([left], [right]) => left.localeCompare(right))
+  return `${userID}:${JSON.stringify(canonicalPayload)}`
+}
+
+/**
+ * Create a Key owned by the explicit target user.
+ * Reuses the same idempotency key after an ambiguous network failure for the same submission.
+ */
 export async function createUserApiKey(userID: number, payload: CreateApiKeyRequest): Promise<ApiKey> {
-  const { data } = await apiClient.post<ApiKey>(`/admin/users/${userID}/api-keys`, payload)
+  const scope = userAPIKeyCreateOperationScope(userID, payload)
+  let idempotencyKey = userAPIKeyCreateOperationKeys.get(scope)
+  if (!idempotencyKey) {
+    const requestID = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    idempotencyKey = `admin-user-api-key-create-${userID}-${requestID}`
+    userAPIKeyCreateOperationKeys.set(scope, idempotencyKey)
+  }
+
+  const { data } = await apiClient.post<ApiKey>(`/admin/users/${userID}/api-keys`, payload, {
+    headers: { 'Idempotency-Key': idempotencyKey },
+  })
+  userAPIKeyCreateOperationKeys.delete(scope)
   return data
 }
 

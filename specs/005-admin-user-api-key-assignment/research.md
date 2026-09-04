@@ -10,17 +10,23 @@
 
 ## Decision 2: 新增显式的目标用户 API Key 路由
 
-新增目标用户资源下的 GET、POST、PUT、DELETE 与目标用户可用分组/倍率读取接口。不会调用当前 `/keys` 路由，因为该路由从登录会话读取管理员自己的用户 ID。
+新增目标用户资源下的六个接口：列表、创建、更新、删除、可用分组读取和分组倍率读取。不会调用当前 `/keys` 路由，因为该路由从登录会话读取管理员自己的用户 ID。
 
 **Reason**: URI 中的 `user_id` 是目标边界，处理器与领域服务都要验证它；不通过伪造用户会话实现代管。
 
 ## Decision 3: 从 `/keys` 提取可复用工作区
 
-`KeysView.vue` 的表格、筛选、编辑表单、确认框、使用指引与 CCS 导入都迁移到一个无页面导航的 `KeyManagementWorkspace`。该组件通过一个明确的 Key 管理适配器执行列表和变更；`KeysView` 提供当前用户适配器，`UserApiKeysModal` 提供目标用户管理员适配器。
+`KeysView.vue` 是唯一的可复用交互实现，持有表格、筛选、编辑表单、确认框、使用指引与 CCS 导入。`KeyManagementWorkspace` 只以无页面导航的嵌入模式托管 `KeysView`；后者通过明确的 Key 管理适配器执行列表和变更。`KeysView` 提供当前用户适配器，`UserApiKeysModal` 提供目标用户管理员适配器。
 
-**Reason**: 保证功能和交互天然保持一致，避免维护两份 Key 管理页面，也让后续 `/keys` 新功能默认可以复用。
+**Reason**: 将交互逻辑集中在 `KeysView`，保证功能和交互天然保持一致；`KeyManagementWorkspace` 只解决嵌入容器职责，避免维护两份 Key 管理页面，也让后续 `/keys` 新功能默认可以复用。
 
-## Decision 4: 保持掩码展示，复制时使用完整值
+## Decision 4: 目标用户的用量统计必须带用户范围
+
+`UserApiKeysModal` 调用既有批量用量接口时携带 `target_user_id`。后端将其传到用量仓储查询，查询同时按 API Key ID 和该用户 ID 过滤；缺少该字段时仍保留管理员全局仪表盘的既有语义。
+
+**Reason**: 同一管理员页面的全局统计和目标用户工作区有不同的数据归属，不能因复用端点而把未选中用户的用量带入模态框。
+
+## Decision 5: 保持掩码展示，复制时使用完整值
 
 列表继续调用既有 `maskApiKey` 呈现 Key。适配器返回的完整值只传给既有复制、使用指引与 CCS 导入流程；不显示在通知、错误消息或审计正文中。
 

@@ -18,6 +18,8 @@ authenticated administrator
   -> target Key id in URL for mutations
   -> APIKeyService(..., target user id, ...)
   -> verify APIKey.user_id == target user id
+  -> batch usage request carries target_user_id
+  -> usage query filters both api_key_id and user_id
 ```
 
-No migration is required. A missing, deleted or disabled target user cannot receive a new Key. A Key associated with another user must be indistinguishable from an inaccessible record to the requester and must never be returned or mutated.
+No migration is required. A missing or deleted target user cannot be read or changed. A disabled target user may be inspected, but cannot create, edit, enable, disable, reset or delete a Key. A Key associated with another user must be indistinguishable from an inaccessible record to the requester and must never be returned, mutated or included in target-scoped usage statistics.

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 
 import UserApiKeysModal from '../UserApiKeysModal.vue'
@@ -74,6 +74,10 @@ const mountModal = (user = createUser(42)) => mount(UserApiKeysModal, {
 })
 
 describe('UserApiKeysModal', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
   // It binds every full-parity workspace operation to the selected target user.
   it('forwards list, create, update, delete, group, rate and usage operations to one target user', async () => {
     const wrapper = mountModal()
@@ -84,7 +88,7 @@ describe('UserApiKeysModal', () => {
       delete: (keyID: number) => Promise<unknown>
       getAvailableGroups: () => Promise<unknown>
       getUserGroupRates: () => Promise<unknown>
-      getUsageStats: (keyIDs: number[]) => Promise<unknown>
+      getUsageStats: (keyIDs: number[], options?: { signal?: AbortSignal }) => Promise<unknown>
     }
 
     listUserApiKeys.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, pages: 1 })
@@ -101,7 +105,8 @@ describe('UserApiKeysModal', () => {
     await adapter.delete(31)
     await adapter.getAvailableGroups()
     await adapter.getUserGroupRates()
-    await adapter.getUsageStats([31])
+    const controller = new AbortController()
+    await adapter.getUsageStats([31], { signal: controller.signal })
 
     expect(listUserApiKeys).toHaveBeenCalledWith(42, 2, 50, { search: 'assigned', status: 'active' }, undefined)
     expect(createUserApiKey).toHaveBeenCalledWith(42, { name: 'assigned' })
@@ -109,7 +114,7 @@ describe('UserApiKeysModal', () => {
     expect(deleteUserApiKey).toHaveBeenCalledWith(42, 31)
     expect(getUserApiKeyAvailableGroups).toHaveBeenCalledWith(42)
     expect(getUserApiKeyGroupRates).toHaveBeenCalledWith(42)
-    expect(getBatchApiKeysUsage).toHaveBeenCalledWith([31])
+    expect(getBatchApiKeysUsage).toHaveBeenCalledWith([31], 42, { signal: controller.signal })
   })
 
   // It rebuilds the adapter when the administrator selects a different user before a request completes.

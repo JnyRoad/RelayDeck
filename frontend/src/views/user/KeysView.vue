@@ -191,15 +191,17 @@
             <div class="text-sm">
               <div class="flex items-center gap-1.5">
                 <span class="text-gray-500 dark:text-gray-400">{{ t('keys.today') }}:</span>
-                <span class="font-medium text-gray-900 dark:text-white">
+                <span v-if="usageStatsAvailable" class="font-medium text-gray-900 dark:text-white">
                   ${{ (usageStats[row.id]?.today_actual_cost ?? 0).toFixed(4) }}
                 </span>
+                <span v-else class="font-medium text-gray-500 dark:text-gray-400">-</span>
               </div>
               <div class="mt-0.5 flex items-center gap-1.5">
                 <span class="text-gray-500 dark:text-gray-400">{{ t('keys.total') }}:</span>
-                <span class="font-medium text-gray-900 dark:text-white">
+                <span v-if="usageStatsAvailable" class="font-medium text-gray-900 dark:text-white">
                   ${{ (usageStats[row.id]?.total_actual_cost ?? 0).toFixed(4) }}
                 </span>
+                <span v-else class="font-medium text-gray-500 dark:text-gray-400">-</span>
               </div>
               <!-- Quota progress (if quota is set) -->
               <div v-if="row.quota > 0" class="mt-1.5">
@@ -1196,6 +1198,7 @@ const currentUserKeyAdapter: KeyManagementAdapter = {
 
 const keyAdapter = computed(() => props.adapter ?? currentUserKeyAdapter)
 const embedded = computed(() => props.embedded)
+const usageStatsAvailable = computed(() => typeof keyAdapter.value.getUsageStats === 'function')
 
 const allColumns = computed<Column[]>(() => [
   { key: 'name', label: t('common.name'), sortable: true },
@@ -1501,16 +1504,17 @@ const loadApiKeys = async () => {
     apiKeys.value = response.items
     pagination.value.total = response.total
     pagination.value.pages = response.pages
+    usageStats.value = {}
 
-    // Load usage stats for all API keys in the list
-    if (response.items.length > 0) {
+    // Load usage stats for all API keys in the list.
+    if (response.items.length > 0 && usageStatsAvailable.value) {
       const keyIds = response.items.map((k) => k.id)
+      const getUsageStats = keyAdapter.value.getUsageStats
+      if (!getUsageStats) return
       try {
-        if (keyAdapter.value.getUsageStats) {
-          const usageResponse = await keyAdapter.value.getUsageStats(keyIds, { signal })
-          if (signal.aborted) return
-          usageStats.value = usageResponse.stats
-        }
+        const usageResponse = await getUsageStats(keyIds, { signal })
+        if (signal.aborted) return
+        usageStats.value = usageResponse.stats
       } catch (e) {
         if (!isAbortError(e)) {
           console.error('Failed to load usage stats:', e)

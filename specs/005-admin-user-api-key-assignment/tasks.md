@@ -8,7 +8,7 @@
 
 **Goal**: Expose `/keys`-equivalent operations for one explicit target user while retaining `APIKeyService` ownership and validation semantics.
 
-- [x] T001 [US1] Add focused failing tests in `backend/internal/handler/admin/user_api_key_handler_test.go` for list filters, create, update/reset, delete, unavailable target user and cross-user Key rejection.
+- [x] T001 [US1] Add focused failing tests in `backend/internal/handler/admin/user_api_key_handler_test.go` for list filters, create, idempotent create retries for one administrator and target user, update/reset, delete, unavailable target user and cross-user Key rejection.
 - [x] T002 [US1] Run `cd backend && go test ./internal/handler/admin -run 'TestAdminUserAPIKey' -count=1` and record the expected failing missing-handler/route result. Observed 2026-09-04: `SetAPIKeyManager` and the five target-user handler methods are undefined.
 - [x] T003 [US1] Add a narrow target-user Key manager interface, a compatible `SetAPIKeyManager` injection point, request mapping and handlers in `backend/internal/handler/admin/user_handler.go`; use existing `service.APIKeyService` methods with `:id` as the target user ID and preserve their validation and ownership failures.
 - [x] T004 [US1] Inject `APIKeyService` through the new compatible setter in `backend/cmd/server/wire_gen.go`, register GET/POST/PUT/DELETE and group/rate routes in `backend/internal/server/routes/admin.go`, and add non-secret audit action mappings in `backend/internal/server/middleware/audit_log.go`.
@@ -31,14 +31,14 @@
 - [x] T011 [US1] Add focused adapter-contract coverage in `frontend/src/components/admin/user/__tests__/UserApiKeysModal.spec.ts` for target-user list/create/update/delete/group/rate/usage paths and switching the selected user.
 - [x] T012 [US1] Run the modal contract test directly through the installed local Vitest binary. Observed 2026-09-04: 2 tests passed after the target-bound adapter implementation.
 - [x] T013 [US1] Add the typed target-user API adapter to `frontend/src/api/admin/users.ts` and replace the read-only content of `frontend/src/components/admin/user/UserApiKeysModal.vue` with `KeyManagementWorkspace` bound to the selected user.
-- [x] T014 [US1] Run workspace, modal and `/keys` focused tests green. Observed 2026-09-04: 3 files and 12 tests passed.
+- [x] T014 [US1] Run workspace, modal and `/keys` focused tests green. Observed 2026-09-04: 3 files and 13 tests passed.
 
 ## Phase 4: Cross-user safety and release validation
 
 **Goal**: Verify no regression in user `/keys` and no cross-user Key exposure or mutation.
 
 - [x] T015 [US3] Add or extend backend and frontend tests for cross-user request rejection, stale modal response isolation and absence of complete Key text from rendered list/error/audit fixtures. Backend cross-user, disabled-target and audit-redaction coverage passed; frontend adapter and workspace contract tests passed.
-- [x] T016 [US3] Run backend regression and `cmd/server` compile; run frontend typecheck, the three focused Vitest files and production Vite build directly through the installed local binaries. Observed 2026-09-04: backend passed; typecheck passed; 12 frontend tests passed; production build passed with pre-existing chunk-size/dynamic-import warnings.
+- [x] T016 [US3] Run backend regression and `cmd/server` compile; run frontend typecheck, the four focused Vitest files and production Vite build directly through the installed local binaries. Observed 2026-09-04: backend passed; typecheck passed; 18 frontend tests passed; production build passed with pre-existing chunk-size/dynamic-import warnings.
 - [ ] T017 [US3] Perform the four manual checks in `specs/005-admin-user-api-key-assignment/quickstart.md` and record only observed results in the final delivery report.
 
 ## Dependencies and order

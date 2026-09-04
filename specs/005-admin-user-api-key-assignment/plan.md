@@ -6,7 +6,7 @@
 
 ## Summary
 
-Create explicit administrator routes scoped by target user ID and delegate every Key operation to the existing `APIKeyService` with that ID, preserving current business validation, owner checks and runtime cache invalidation. `UserHandler` receives this capability through a narrow internal interface and a setter, so existing constructor call sites and handler tests remain compatible while the production wire injects the concrete service. Parameterize the existing `KeysView` interactive surface with a typed ownership-bound adapter, then host that same surface through a thin reusable workspace in the administrator modal. This avoids duplicating its existing dialogs, use-Key panel and CCS import behavior.
+Create explicit administrator routes scoped by target user ID and delegate every Key operation to the existing `APIKeyService` with that ID, preserving current business validation, owner checks and runtime cache invalidation. `UserHandler` receives this capability through a narrow internal interface; an admin Wire provider constructs it with the concrete service so generated wiring retains the dependency. The target-user adapter also supplies `target_user_id` to the existing batch usage endpoint, whose query is scoped to that user. `KeysView` remains the one interactive Key-management implementation; `KeyManagementWorkspace` is its thin embedded host inside the administrator modal. This avoids duplicating dialogs, use-Key guidance and CCS import behavior.
 
 ## Technical Context
 
@@ -24,7 +24,7 @@ Create explicit administrator routes scoped by target user ID and delegate every
 
 **Constraints**: Full behavior parity with `/keys`; list rendering stays masked; full Key may be copied but never added to notifications, errors or audit bodies; each Key read/mutation verifies target ownership.
 
-**Scale/Scope**: One existing target-user modal, one existing Key page, five target-user API routes, no database migration.
+**Scale/Scope**: One existing target-user modal, one existing Key page, six target-user API routes, one target-scoped use of the existing batch usage route, no database migration.
 
 ## Constitution Check
 
@@ -39,7 +39,8 @@ The gate passes: no constitution exception is needed.
 
 ```text
 backend/
-├── cmd/server/wire_gen.go                              # Inject existing APIKeyService through UserHandler's narrow setter
+├── internal/handler/wire.go                             # Register the stable admin UserHandler Wire provider
+├── cmd/server/wire_gen.go                               # Generated construction with the injected APIKeyService
 ├── internal/handler/admin/user_handler.go              # Target-user Key handlers and request mapping
 ├── internal/handler/admin/user_api_key_handler_test.go # New focused route/ownership tests
 ├── internal/server/routes/admin.go                     # Add target-user Key routes
@@ -55,15 +56,15 @@ frontend/
 └── src/views/user/KeysView.vue                          # Shared interactive Key surface with default current-user adapter
 ```
 
-**Structure Decision**: `KeysView` remains the sole interactive implementation and accepts a typed adapter plus embedded mode. `KeyManagementWorkspace` is the modal-safe host; `KeysView` supplies its existing current-user adapter by default, while `UserApiKeysModal` supplies the selected user's administrator adapter. This prevents behavioral drift while keeping page chrome and modal chrome separate.
+**Structure Decision**: `KeysView` is the sole reusable interactive implementation and accepts a typed adapter plus embedded mode. `KeyManagementWorkspace` only hosts that implementation in a modal-safe embedded layout; `KeysView` supplies its current-user adapter by default, while `UserApiKeysModal` supplies the selected user's administrator adapter. This prevents behavioral drift while keeping page chrome and modal chrome separate.
 
 ## Implementation Sequence
 
 1. Write backend handler tests covering successful target-user list/create/update/delete, invalid target and cross-user Key rejection; run them red.
-2. Add a narrow `targetUserAPIKeyManager` contract and `SetAPIKeyManager` on `UserHandler`, then add target-user request mapping and handlers. Inject the concrete `APIKeyService` through the setter in the production wire, register routes and audit actions, and use the URL target user ID for every service call; run backend tests green.
+2. Add a narrow `targetUserAPIKeyManager` contract and target-user request mapping and handlers. Construct `UserHandler` through an admin Wire provider that injects the concrete `APIKeyService`, register routes and audit actions, and use the URL target user ID for every Key service call; run backend tests green.
 3. Write a focused workspace test covering a supplied API adapter, masked display/copy, mutation refresh and stale-owner response discard; run it red.
 4. Parameterize the existing `/keys` surface with the typed adapter and embedded mode, add the thin `KeyManagementWorkspace` host, and pass the original `KeysView` regression test.
-5. Add the administrator adapter and host workspace in `UserApiKeysModal`; add modal tests for target ID propagation, create/update/delete/copy and stale target switches; run tests green.
+5. Add the administrator adapter and host workspace in `UserApiKeysModal`; pass the selected target user to scoped usage-statistics requests; add modal tests for target ID propagation, create/update/delete/copy and stale target switches; run tests green.
 6. Run typecheck, focused regressions and production build. Perform the quickstart manual acceptance before reporting completion.
 
 ## Complexity Tracking

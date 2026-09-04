@@ -1129,20 +1129,25 @@ func (s *UsageLogRepoSuite) TestGetBatchUserUsageStats_Empty() {
 
 func (s *UsageLogRepoSuite) TestGetBatchApiKeyUsageStats() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "batchkey@test.com"})
+	otherUser := mustCreateUser(s.T(), s.client, &service.User{Email: "batchkey-other@test.com"})
 	apiKey1 := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-batchkey1", Name: "k1"})
 	apiKey2 := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-batchkey2", Name: "k2"})
+	otherAPIKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: otherUser.ID, Key: "sk-batchkey-other", Name: "k3"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-batchkey"})
 
 	s.createUsageLog(user, apiKey1, account, 10, 20, 0.5, time.Now())
 	s.createUsageLog(user, apiKey2, account, 15, 25, 0.6, time.Now())
+	s.createUsageLog(otherUser, otherAPIKey, account, 20, 30, 0.7, time.Now())
 
-	stats, err := s.repo.GetBatchAPIKeyUsageStats(s.ctx, []int64{apiKey1.ID, apiKey2.ID}, time.Time{}, time.Time{})
+	stats, err := s.repo.GetBatchAPIKeyUsageStats(s.ctx, []int64{apiKey1.ID, apiKey2.ID, otherAPIKey.ID}, user.ID, time.Time{}, time.Time{})
 	s.Require().NoError(err, "GetBatchAPIKeyUsageStats")
-	s.Require().Len(stats, 2)
+	s.Require().Len(stats, 3)
+	s.Require().Equal(0.0, stats[otherAPIKey.ID].TotalActualCost)
+	s.Require().Equal(0.0, stats[otherAPIKey.ID].TodayActualCost)
 }
 
 func (s *UsageLogRepoSuite) TestGetBatchApiKeyUsageStats_Empty() {
-	stats, err := s.repo.GetBatchAPIKeyUsageStats(s.ctx, []int64{}, time.Time{}, time.Time{})
+	stats, err := s.repo.GetBatchAPIKeyUsageStats(s.ctx, []int64{}, 0, time.Time{}, time.Time{})
 	s.Require().NoError(err)
 	s.Require().Empty(stats)
 }
