@@ -70,6 +70,33 @@ type Repository interface {
 	FinishTrace(ctx context.Context, record TraceFinishRecord) error
 }
 
+// TraceAttemptRecord is the persisted metadata for one actual upstream
+// dispatch. The payload rows use the same positive attempt number.
+type TraceAttemptRecord struct {
+	TraceID         string
+	AttemptNo       int
+	AccountID       *int64
+	AccountSnapshot string
+	UpstreamRoute   string
+	UpstreamModel   string
+	StartedAt       time.Time
+}
+
+// TraceAttemptFinishRecord is the terminal metadata update for an existing
+// upstream attempt row.
+type TraceAttemptFinishRecord struct {
+	TraceID string
+	UpstreamAttemptFinishInput
+	CompletedAt time.Time
+}
+
+// AttemptRepository is an additive optional extension for storage adapters
+// that support the per-dispatch table introduced by migration 232.
+type AttemptRepository interface {
+	CreateAttempt(ctx context.Context, record TraceAttemptRecord) error
+	FinishAttempt(ctx context.Context, record TraceAttemptFinishRecord) error
+}
+
 // Service turns middleware observations into safe, encrypted persistence work.
 type Service struct {
 	configStore ConfigStore
@@ -142,7 +169,7 @@ func (s *Service) RecordPayload(ctx context.Context, handle TraceHandle, input P
 	record := PayloadRecord{
 		TraceID:       handle.TraceID,
 		Kind:          input.Kind,
-		AttemptNo:     0,
+		AttemptNo:     input.AttemptNo,
 		ContentType:   input.ContentType,
 		OriginalBytes: input.OriginalBytes,
 		SHA256:        input.SHA256,
@@ -158,7 +185,7 @@ func (s *Service) RecordPayload(ctx context.Context, handle TraceHandle, input P
 		return s.repository.CreatePayload(ctx, record)
 	}
 
-	captured := CaptureForStorage(input.ContentType, input.Body, DefaultPayloadLimitBytes)
+	captured := CaptureForStorage(input.ContentType, input.Body, CompleteTextPayloadLimitBytes)
 	record.CaptureStatus = captured.Status
 	if record.OriginalBytes == 0 {
 		record.OriginalBytes = captured.OriginalBytes
@@ -195,6 +222,55 @@ func (s *Service) Finish(ctx context.Context, handle TraceHandle, input FinishIn
 		return fmt.Errorf("model trace repository is unavailable")
 	}
 	return s.repository.FinishTrace(ctx, TraceFinishRecord{TraceID: handle.TraceID, FinishInput: input})
+}
+
+// StartUpstreamAttempt persists one actual shared-transport dispatch when the
+// concrete repository supports attempt rows. Callers intentionally ignore an
+// error so tracing can never block a model response.
+func (s *Service) StartUpstreamAttempt(ctx context.Context, handle TraceHandle, input UpstreamAttemptInput) error {
+	if s == nil || !handle.Enabled {
+		return nil
+	}
+	if input.AttemptNo < 1 {
+		return fmt.Errorf("model trace upstream attempt number is invalid")
+	}
+	repository, ok := s.repository.(AttemptRepository)
+	if !ok || repository == nil {
+		return fmt.Errorf("model trace attempt repository is unavailable")
+	}
+	startedAt := input.StartedAt
+	if startedAt.IsZero() {
+		startedAt = s.now().UTC()
+	}
+	return repository.CreateAttempt(ctx, TraceAttemptRecord{
+		TraceID:         handle.TraceID,
+		AttemptNo:       input.AttemptNo,
+		AccountID:       input.AccountID,
+		AccountSnapshot: input.AccountSnapshot,
+		UpstreamRoute:   input.UpstreamRoute,
+		UpstreamModel:   input.UpstreamModel,
+		StartedAt:       startedAt,
+	})
+}
+
+// FinishUpstreamAttempt stores terminal attempt metadata without reading or
+// modifying the attempt's encrypted request or response payload rows.
+func (s *Service) FinishUpstreamAttempt(ctx context.Context, handle TraceHandle, input UpstreamAttemptFinishInput) error {
+	if s == nil || !handle.Enabled {
+		return nil
+	}
+	if input.AttemptNo < 1 {
+		return fmt.Errorf("model trace upstream attempt number is invalid")
+	}
+	repository, ok := s.repository.(AttemptRepository)
+	if !ok || repository == nil {
+		return fmt.Errorf("model trace attempt repository is unavailable")
+	}
+	return repository.FinishAttempt(ctx, TraceAttemptFinishRecord{
+		TraceID:                    handle.TraceID,
+		UpstreamAttemptFinishInput: input,
+		CompletedAt:                s.now().UTC(),
+	})
 }
 
 // isTextTracePayload permits only textual protocols that can be safely viewed

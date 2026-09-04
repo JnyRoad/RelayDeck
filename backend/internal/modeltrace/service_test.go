@@ -147,9 +147,9 @@ func TestServiceNeverStoresTruncatedRawPrefix(t *testing.T) {
 	}
 }
 
-// TestServiceNeverStoresCaptureLimitedBody verifies that the storage-layer
-// limit follows the same metadata-only rule as an already-truncated reader.
-func TestServiceNeverStoresCaptureLimitedBody(t *testing.T) {
+// TestServiceStoresLegacyPrefixSizedText verifies that ordinary text past the
+// former fixed prefix remains complete until its configured trace expiry.
+func TestServiceStoresLegacyPrefixSizedText(t *testing.T) {
 	repository := &traceRepositoryStub{}
 	encryptor := &traceEncryptorStub{}
 	service := NewService(traceConfigStoreStub{config: TraceConfig{Enabled: true, PayloadCaptureEnabled: true, RetentionDays: 7}}, repository, encryptor)
@@ -167,15 +167,45 @@ func TestServiceNeverStoresCaptureLimitedBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("record capture-limited payload: %v", err)
 	}
-	if len(encryptor.inputs) != 0 {
-		t.Fatalf("capture-limited payload reached encryptor: %#v", encryptor.inputs)
+	if len(encryptor.inputs) != 1 {
+		t.Fatalf("complete legacy-prefix payload encryptor inputs=%#v", encryptor.inputs)
 	}
 	if len(repository.payloads) != 1 {
 		t.Fatalf("stored payload count = %d, want 1", len(repository.payloads))
 	}
 	stored := repository.payloads[0]
-	if stored.CaptureStatus != CaptureStatusTruncated || stored.Ciphertext != "" || stored.StoredBytes != 0 {
-		t.Fatalf("stored capture-limited payload = %#v, want metadata only", stored)
+	if stored.CaptureStatus == CaptureStatusTruncated || stored.Ciphertext == "" || stored.StoredBytes <= DefaultPayloadLimitBytes {
+		t.Fatalf("stored complete payload = %#v, want encrypted text beyond legacy prefix", stored)
+	}
+}
+
+// TestServiceStoresCompleteTextPastLegacyPrefix verifies that normal textual
+// prompts are retained whole instead of silently becoming a 1 MiB prefix. The
+// retention policy, rather than a prefix cap, bounds their database lifetime.
+func TestServiceStoresCompleteTextPastLegacyPrefix(t *testing.T) {
+	repository := &traceRepositoryStub{}
+	encryptor := &traceEncryptorStub{}
+	service := NewService(traceConfigStoreStub{config: TraceConfig{Enabled: true, PayloadCaptureEnabled: true, RetentionDays: 7}}, repository, encryptor)
+	handle, err := service.Start(context.Background(), StartInput{Route: "/v1/responses"})
+	if err != nil {
+		t.Fatalf("start trace: %v", err)
+	}
+	body := []byte(`{"input":"` + strings.Repeat("x", DefaultPayloadLimitBytes+1) + `"}`)
+	if err := service.RecordPayload(context.Background(), handle, PayloadInput{
+		Kind:        PayloadKindClientRequest,
+		ContentType: "application/json",
+		Body:        body,
+	}); err != nil {
+		t.Fatalf("record complete payload: %v", err)
+	}
+	if len(encryptor.inputs) != 1 {
+		t.Fatalf("encryptor inputs=%d, want one complete payload", len(encryptor.inputs))
+	}
+	if len(encryptor.inputs[0]) <= DefaultPayloadLimitBytes {
+		t.Fatalf("complete payload input=%d bytes, want above legacy prefix", len(encryptor.inputs[0]))
+	}
+	if len(repository.payloads) != 1 || repository.payloads[0].CaptureStatus == CaptureStatusTruncated {
+		t.Fatalf("stored payload=%#v, want complete encrypted text", repository.payloads)
 	}
 }
 
@@ -199,5 +229,31 @@ func TestServiceDerivesModelSummary(t *testing.T) {
 	}
 	if len(repository.payloads) != 1 || repository.payloads[0].Model != "gpt-trace-test" {
 		t.Fatalf("stored payload summaries = %#v, want requested model", repository.payloads)
+	}
+}
+
+// TestServiceStoresPayloadAtItsActualUpstreamAttempt verifies that retry
+// payloads retain their transport occurrence instead of being overwritten as
+// attempt zero on the root trace.
+func TestServiceStoresPayloadAtItsActualUpstreamAttempt(t *testing.T) {
+	repository := &traceRepositoryStub{}
+	service := NewService(traceConfigStoreStub{config: TraceConfig{Enabled: true, PayloadCaptureEnabled: true, RetentionDays: 7}}, repository, &traceEncryptorStub{})
+	handle, err := service.Start(context.Background(), StartInput{Route: "/v1/responses"})
+	if err != nil {
+		t.Fatalf("start trace: %v", err)
+	}
+
+	err = service.RecordPayload(context.Background(), handle, PayloadInput{
+		Kind:        PayloadKind("upstream_request"),
+		AttemptNo:   2,
+		ContentType: "application/json",
+		Body:        []byte(`{"model":"fallback-model","input":"retry"}`),
+	})
+
+	if err != nil {
+		t.Fatalf("record attempt payload: %v", err)
+	}
+	if len(repository.payloads) != 1 || repository.payloads[0].AttemptNo != 2 {
+		t.Fatalf("stored attempt payloads = %#v, want attempt 2", repository.payloads)
 	}
 }

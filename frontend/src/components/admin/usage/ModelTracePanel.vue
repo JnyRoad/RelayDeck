@@ -25,38 +25,42 @@
         </label>
         <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
           <span>{{ t('admin.modelTrace.settings.retention') }}</span>
-          <input v-model.number="config.retention_days" data-testid="model-trace-retention-days" type="number" min="1" max="90" class="input w-20 px-2 py-1" />
+          <input v-model.number="config.retention_days" data-testid="model-trace-retention-days" type="number" min="1" max="365" class="input w-20 px-2 py-1" />
         </label>
       </div>
     </div>
 
     <div class="flex flex-wrap gap-2">
       <input v-model.trim="filters.request_id" class="input min-w-48 flex-1" :placeholder="t('admin.modelTrace.filters.requestId')" @keyup.enter="applyFilters" />
+      <input v-model.trim="filters.user" data-testid="model-trace-filter-user" class="input min-w-40 flex-1" :placeholder="t('admin.modelTrace.filters.user')" @keyup.enter="applyFilters" />
+      <input v-model.trim="filters.api_key" data-testid="model-trace-filter-key" class="input min-w-40 flex-1" :placeholder="t('admin.modelTrace.filters.apiKey')" @keyup.enter="applyFilters" />
       <input v-model.trim="filters.requested_model" class="input min-w-40 flex-1" :placeholder="t('admin.modelTrace.filters.model')" @keyup.enter="applyFilters" />
       <select v-model="filters.outcome" class="input w-40" @change="applyFilters">
         <option value="">{{ t('admin.modelTrace.filters.allOutcomes') }}</option>
         <option v-for="outcome in outcomes" :key="outcome" :value="outcome">{{ outcome }}</option>
       </select>
-      <button class="btn btn-secondary" @click="applyFilters">{{ t('common.search') }}</button>
+      <button data-testid="model-trace-search" class="btn btn-secondary" @click="applyFilters">{{ t('common.search') }}</button>
       <button class="btn btn-secondary" :disabled="previewing" @click="loadCleanupPreview">{{ t('admin.modelTrace.actions.previewCleanup') }}</button>
       <button class="btn btn-danger" :disabled="cleaning || !cleanupPreview?.expired_traces" @click="confirmCleanup">{{ t('admin.modelTrace.actions.cleanup') }}</button>
     </div>
 
     <p v-if="cleanupPreview" class="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
-      {{ t('admin.modelTrace.cleanup.preview', { traces: cleanupPreview.expired_traces, payloads: cleanupPreview.expired_payloads, bytes: formatBytes(cleanupPreview.stored_bytes) }) }}
+      {{ t('admin.modelTrace.cleanup.preview', { traces: cleanupPreview.expired_traces, attempts: cleanupPreview.expired_attempts, payloads: cleanupPreview.expired_payloads, bytes: formatBytes(cleanupPreview.stored_bytes) }) }}
     </p>
     <p v-if="errorMessage" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-300">{{ errorMessage }}</p>
 
     <div class="overflow-x-auto rounded-xl border border-gray-200 dark:border-dark-700">
       <table class="min-w-full divide-y divide-gray-200 text-sm dark:divide-dark-700">
         <thead class="bg-gray-50 text-left text-xs font-medium uppercase text-gray-500 dark:bg-dark-800 dark:text-gray-400">
-          <tr><th class="px-3 py-2">{{ t('admin.modelTrace.columns.time') }}</th><th class="px-3 py-2">{{ t('admin.modelTrace.columns.route') }}</th><th class="px-3 py-2">{{ t('admin.modelTrace.columns.model') }}</th><th class="px-3 py-2">{{ t('admin.modelTrace.columns.result') }}</th><th class="px-3 py-2">{{ t('admin.modelTrace.columns.duration') }}</th></tr>
+          <tr><th class="px-3 py-2">{{ t('admin.modelTrace.columns.time') }}</th><th class="px-3 py-2">{{ t('admin.modelTrace.columns.user') }}</th><th class="px-3 py-2">{{ t('admin.modelTrace.columns.apiKey') }}</th><th class="px-3 py-2">{{ t('admin.modelTrace.columns.route') }}</th><th class="px-3 py-2">{{ t('admin.modelTrace.columns.model') }}</th><th class="px-3 py-2">{{ t('admin.modelTrace.columns.result') }}</th><th class="px-3 py-2">{{ t('admin.modelTrace.columns.duration') }}</th></tr>
         </thead>
         <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
-          <tr v-if="loading"><td colspan="5" class="px-3 py-8 text-center text-gray-500">{{ t('common.loading') }}</td></tr>
-          <tr v-else-if="items.length === 0"><td colspan="5" class="px-3 py-8 text-center text-gray-500">{{ t('admin.modelTrace.empty') }}</td></tr>
+          <tr v-if="loading"><td colspan="7" class="px-3 py-8 text-center text-gray-500">{{ t('common.loading') }}</td></tr>
+          <tr v-else-if="items.length === 0"><td colspan="7" class="px-3 py-8 text-center text-gray-500">{{ t('admin.modelTrace.empty') }}</td></tr>
           <tr v-for="item in items" :key="item.trace_id" class="hover:bg-primary-50 dark:hover:bg-primary-950/20">
             <td class="whitespace-nowrap px-3 py-2 text-gray-600 dark:text-gray-300"><button :data-testid="`model-trace-row-${item.trace_id}`" class="rounded text-left underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500" @click="openDetail(item.trace_id)">{{ formatTime(item.created_at) }}</button></td>
+            <td class="max-w-40 truncate px-3 py-2">{{ item.user_snapshot || '—' }}</td>
+            <td class="max-w-40 truncate px-3 py-2 font-mono text-xs">{{ item.api_key_snapshot || '—' }}</td>
             <td class="max-w-56 truncate px-3 py-2 font-mono text-xs">{{ item.route }}</td>
             <td class="max-w-48 truncate px-3 py-2">{{ item.requested_model || item.response_model || '—' }}</td>
             <td class="px-3 py-2"><span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs dark:bg-dark-700">{{ item.outcome }} · {{ item.status_code ?? '—' }}</span></td>
@@ -70,55 +74,34 @@
       <div class="flex gap-2"><button class="btn btn-secondary btn-sm" :disabled="page <= 1 || loading" @click="changePage(page - 1)">{{ t('common.back') }}</button><button class="btn btn-secondary btn-sm" :disabled="page * pageSize >= total || loading" @click="changePage(page + 1)">{{ t('common.next') }}</button></div>
     </div>
 
-    <aside v-if="detail" class="rounded-xl border border-primary-200 bg-white shadow-sm dark:border-primary-900 dark:bg-dark-900">
-      <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 px-4 py-3 dark:border-dark-700">
-        <div><div class="font-medium">{{ t('admin.modelTrace.detail.title') }}</div><div class="font-mono text-xs text-gray-500">{{ detail.trace.trace_id }}</div></div>
-        <button class="btn btn-secondary btn-sm" @click="detail = null">{{ t('common.close') }}</button>
-      </div>
-      <div class="grid gap-3 p-4 lg:grid-cols-[12rem_minmax(0,1fr)]">
-        <div class="space-y-1">
-          <button v-for="payload in detail.payloads" :key="payloadKey(payload)" :data-testid="`model-trace-payload-${payloadKey(payload)}`" class="block w-full rounded px-3 py-2 text-left text-sm" :class="activePayload === payload ? 'bg-primary-100 text-primary-800 dark:bg-primary-900/50 dark:text-primary-200' : 'hover:bg-gray-100 dark:hover:bg-dark-800'" @click="selectPayload(payload)">
-            {{ payload.kind }}<span class="block text-xs opacity-70">{{ payload.content_status }}</span>
-          </button>
-        </div>
-        <div v-if="activePayload" class="min-w-0">
-          <div class="mb-2 flex items-center justify-between gap-2"><span class="text-sm text-gray-500">{{ activePayload.content_type || 'text/plain' }} · {{ formatBytes(activePayload.original_bytes) }}</span><button class="btn btn-secondary btn-sm" :disabled="activePayload.content_status !== 'available'" @click="copyPayload">{{ t('common.copy') }}</button></div>
-          <div v-if="loadingPayloadKey === payloadKey(activePayload)" class="rounded-lg bg-gray-50 p-6 text-sm text-gray-500 dark:bg-dark-800">{{ t('common.loading') }}</div>
-          <pre v-else-if="activePayload.content_status === 'available'" class="max-h-[28rem] overflow-auto rounded-lg bg-slate-950 p-4 text-xs leading-5 text-slate-100 whitespace-pre-wrap break-words">{{ activePayload.content }}</pre>
-          <div v-else class="rounded-lg bg-gray-50 p-6 text-sm text-gray-500 dark:bg-dark-800">{{ t('admin.modelTrace.detail.contentUnavailable', { status: activePayload.content_status }) }}</div>
-        </div>
-      </div>
-    </aside>
+    <ModelTraceDetailDialog :show="selectedTraceId !== null" :trace-id="selectedTraceId" @close="selectedTraceId = null" />
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import ModelTraceDetailDialog from './ModelTraceDetailDialog.vue'
 import { modelTraceAPI } from '@/api/admin/modelTrace'
-import type { ModelTraceConfig, ModelTraceDetail, ModelTraceOutcome, ModelTracePayload, ModelTraceQueryParams, ModelTraceSummary, ModelTraceCleanupPreview } from '@/api/admin/modelTrace'
+import type { ModelTraceConfig, ModelTraceOutcome, ModelTraceQueryParams, ModelTraceSummary, ModelTraceCleanupPreview } from '@/api/admin/modelTrace'
 
 const { t } = useI18n()
 const page = ref(1)
 const pageSize = 20
 const total = ref(0)
 const items = ref<ModelTraceSummary[]>([])
-const detail = ref<ModelTraceDetail | null>(null)
-const activePayload = ref<ModelTracePayload | null>(null)
+const selectedTraceId = ref<string | null>(null)
 const cleanupPreview = ref<ModelTraceCleanupPreview | null>(null)
 const loading = ref(false)
 const saving = ref(false)
 const cleaning = ref(false)
 const previewing = ref(false)
 const errorMessage = ref('')
-const loadingPayloadKey = ref('')
 const outcomes: ModelTraceOutcome[] = ['succeeded', 'failed', 'blocked', 'client_cancelled', 'partial']
-const filters = reactive<Pick<ModelTraceQueryParams, 'request_id' | 'requested_model' | 'outcome'>>({ request_id: '', requested_model: '', outcome: undefined })
+const filters = reactive<Pick<ModelTraceQueryParams, 'request_id' | 'user' | 'api_key' | 'requested_model' | 'outcome'>>({ request_id: '', user: '', api_key: '', requested_model: '', outcome: undefined })
 const config = reactive<ModelTraceConfig>({ enabled: false, payload_capture_enabled: false, auto_cleanup_enabled: false, retention_days: 7 })
-const listParams = computed<ModelTraceQueryParams>(() => ({ page: page.value, page_size: pageSize, request_id: filters.request_id || undefined, requested_model: filters.requested_model || undefined, outcome: filters.outcome || undefined }))
+const listParams = computed<ModelTraceQueryParams>(() => ({ page: page.value, page_size: pageSize, request_id: filters.request_id || undefined, user: filters.user || undefined, api_key: filters.api_key || undefined, requested_model: filters.requested_model || undefined, outcome: filters.outcome || undefined }))
 let listRequestVersion = 0
-let detailRequestVersion = 0
-let payloadRequestVersion = 0
 let configSaveRequestVersion = 0
 let configReadVersion = 0
 
@@ -153,49 +136,15 @@ const changePage = (nextPage: number) => {
   void load()
 }
 
-/** 按需读取单条安全详情；正文只在管理员打开其页签后才会请求。 */
-const openDetail = async (traceID: string) => {
-	const requestVersion = ++detailRequestVersion
-	payloadRequestVersion++
-	detail.value = null
-	activePayload.value = null
-	loadingPayloadKey.value = ''
-  errorMessage.value = ''
-  try {
-    const result = await modelTraceAPI.getDetail(traceID)
-		if (requestVersion !== detailRequestVersion) return
-    detail.value = result
-  } catch {
-		if (requestVersion === detailRequestVersion) errorMessage.value = t('admin.modelTrace.errors.detail')
-  }
-}
-
-/** 仅在选中正文页签后读取该一份内容，并忽略过期的并发响应。 */
-const selectPayload = (payload: ModelTracePayload) => {
-	activePayload.value = payload
-	if (!detail.value || payload.content_status !== 'available') return
-	const detailVersion = detailRequestVersion
-	const requestVersion = ++payloadRequestVersion
-	const key = payloadKey(payload)
-	loadingPayloadKey.value = key
-	void modelTraceAPI.getPayload(detail.value.trace.trace_id, payload.kind, payload.attempt_no).then((loaded) => {
-		if (detailVersion !== detailRequestVersion || requestVersion !== payloadRequestVersion || !detail.value) return
-		const current = detail.value.payloads.find((item) => payloadKey(item) === key)
-		if (!current) return
-		Object.assign(current, loaded)
-		activePayload.value = current
-	}).catch(() => {
-		if (detailVersion === detailRequestVersion && requestVersion === payloadRequestVersion) errorMessage.value = t('admin.modelTrace.errors.detail')
-	}).finally(() => {
-		if (requestVersion === payloadRequestVersion) loadingPayloadKey.value = ''
-	})
-}
-
-/** payloadKey 为异步加载和 Vue 列表提供一份稳定的正文种类标识。 */
-const payloadKey = (payload: ModelTracePayload) => `${payload.kind}-${payload.attempt_no}`
+/** 打开独立会话回放窗口；列表请求始终不下载正文。 */
+const openDetail = (traceID: string) => { selectedTraceId.value = traceID }
 
 /** 保存完整设置快照，并由后端校验留存天数与启用策略。 */
 const saveConfig = async () => {
+	if (!Number.isInteger(config.retention_days) || config.retention_days < 1 || config.retention_days > 365) {
+		errorMessage.value = t('admin.modelTrace.errors.retention')
+		return
+	}
 	const requestVersion = ++configSaveRequestVersion
   saving.value = true
   errorMessage.value = ''
@@ -233,22 +182,12 @@ const confirmCleanup = async () => {
   try {
     await modelTraceAPI.runCleanup()
     cleanupPreview.value = null
-    detail.value = null
+    selectedTraceId.value = null
     await load()
   } catch {
     errorMessage.value = t('admin.modelTrace.errors.cleanup')
   } finally {
     cleaning.value = false
-  }
-}
-
-/** 复制当前已安全解密的正文；不可用正文不触发浏览器剪贴板调用。 */
-const copyPayload = async () => {
-  if (!activePayload.value?.content || !navigator.clipboard) return
-  try {
-    await navigator.clipboard.writeText(activePayload.value.content)
-  } catch {
-    errorMessage.value = t('admin.modelTrace.errors.copy')
   }
 }
 

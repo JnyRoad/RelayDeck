@@ -28,6 +28,7 @@ const (
 // CleanupPreview 是管理员确认前看到的到期数据影响范围，不包含任何正文。
 type CleanupPreview struct {
 	ExpiredTraces   int64     `json:"expired_traces"`
+	ExpiredAttempts int64     `json:"expired_attempts"`
 	ExpiredPayloads int64     `json:"expired_payloads"`
 	StoredBytes     int64     `json:"stored_bytes"`
 	CutoffAt        time.Time `json:"cutoff_at"`
@@ -36,6 +37,7 @@ type CleanupPreview struct {
 // CleanupResult 是一轮批量删除的聚合统计，不包含被删除记录的内容。
 type CleanupResult struct {
 	DeletedTraces   int64 `json:"deleted_traces"`
+	DeletedAttempts int64 `json:"deleted_attempts"`
 	DeletedPayloads int64 `json:"deleted_payloads"`
 	DeletedBytes    int64 `json:"deleted_bytes"`
 }
@@ -215,6 +217,7 @@ func (s *CleanupService) run(ctx context.Context, mode CleanupMode, requestedBy 
 			break
 		}
 		result.DeletedTraces += deleted.DeletedTraces
+		result.DeletedAttempts += deleted.DeletedAttempts
 		result.DeletedPayloads += deleted.DeletedPayloads
 		result.DeletedBytes += deleted.DeletedBytes
 		if deleted.DeletedTraces < int64(s.cleanupBatchSize()) {

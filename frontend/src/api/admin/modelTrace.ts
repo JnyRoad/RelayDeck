@@ -3,6 +3,7 @@ import type { PaginatedResponse } from '@/types'
 
 export type ModelTraceOutcome = 'succeeded' | 'failed' | 'blocked' | 'client_cancelled' | 'partial'
 export type ModelTraceCaptureStatus = 'complete' | 'truncated' | 'redacted' | 'not_applicable' | 'failed'
+export type ModelTracePayloadKind = 'client_request' | 'client_response' | 'error_response' | 'upstream_request' | 'upstream_response' | 'upstream_error'
 
 export interface ModelTraceConfig {
   enabled: boolean
@@ -18,6 +19,13 @@ export interface ModelTraceSummary {
   api_key_id?: number
   group_id?: number
   account_id?: number
+  user_snapshot: string
+  api_key_snapshot: string
+  group_snapshot: string
+  account_snapshot: string
+  session_id: string
+  previous_response_id: string
+  response_id: string
   route: string
   protocol: string
   requested_model: string
@@ -38,7 +46,7 @@ export interface ModelTraceSummary {
 }
 
 export interface ModelTracePayload {
-  kind: 'client_request' | 'client_response' | 'error_response' | 'upstream_attempt'
+  kind: ModelTracePayloadKind
   attempt_no: number
   capture_status: ModelTraceCaptureStatus
   content_type: string
@@ -50,9 +58,32 @@ export interface ModelTracePayload {
   content_status: 'available' | 'unavailable' | 'not_captured'
 }
 
+export interface ModelTraceAttempt {
+  attempt_no: number
+  account_id?: number
+  account_snapshot: string
+  upstream_route: string
+  upstream_model: string
+  outcome: ModelTraceOutcome
+  status_code?: number
+  error_stage: string
+  error_code: string
+  duration_ms?: number
+  started_at: string
+  completed_at?: string
+}
+
 export interface ModelTraceDetail {
   trace: ModelTraceSummary
+  attempts: ModelTraceAttempt[]
   payloads: ModelTracePayload[]
+}
+
+export interface ModelTraceConversation {
+  current_trace_id: string
+  linked: boolean
+  link_source: string
+  turns: ModelTraceDetail[]
 }
 
 export interface ModelTraceQueryParams {
@@ -62,10 +93,14 @@ export interface ModelTraceQueryParams {
   api_key_id?: number
   group_id?: number
   account_id?: number
+  user?: string
+  api_key?: string
   trace_id?: string
   request_id?: string
   route?: string
   requested_model?: string
+  upstream_model?: string
+  session_id?: string
   protocol?: string
   outcome?: ModelTraceOutcome
   capture_status?: ModelTraceCaptureStatus
@@ -75,6 +110,7 @@ export interface ModelTraceQueryParams {
 
 export interface ModelTraceCleanupPreview {
   expired_traces: number
+  expired_attempts: number
   expired_payloads: number
   stored_bytes: number
   cutoff_at: string
@@ -100,6 +136,21 @@ export async function getPayload(traceID: string, kind: ModelTracePayload['kind'
   return data
 }
 
+/** 加载仅由显式会话或响应谱系证明关联的回放索引，不解密正文。 */
+export async function getConversation(traceID: string): Promise<ModelTraceConversation> {
+  const { data } = await apiClient.get<ModelTraceConversation>(`/admin/model-traces/${encodeURIComponent(traceID)}/conversation`)
+  return data
+}
+
+/** 在浏览器复制成功后记录只含正文标识的服务器审计事件。 */
+export async function recordAccessEvent(traceID: string, kind: ModelTracePayloadKind, attemptNo: number): Promise<void> {
+  await apiClient.post(`/admin/model-traces/${encodeURIComponent(traceID)}/access-events`, {
+    action: 'copy',
+    kind,
+    attempt_no: attemptNo,
+  })
+}
+
 /** 读取当前的追踪、正文采集和自动清理策略。 */
 export async function getConfig(): Promise<ModelTraceConfig> {
   const { data } = await apiClient.get<ModelTraceConfig>('/admin/model-traces/config')
@@ -119,11 +170,11 @@ export async function previewCleanup(): Promise<ModelTraceCleanupPreview> {
 }
 
 /** 执行管理员已确认的到期调用清理。 */
-export async function runCleanup(): Promise<{ deleted_traces: number; deleted_payloads: number; deleted_bytes: number }> {
-  const { data } = await apiClient.post<{ deleted_traces: number; deleted_payloads: number; deleted_bytes: number }>('/admin/model-traces/cleanup', { confirm: true })
+export async function runCleanup(): Promise<{ deleted_traces: number; deleted_attempts: number; deleted_payloads: number; deleted_bytes: number }> {
+	const { data } = await apiClient.post<{ deleted_traces: number; deleted_attempts: number; deleted_payloads: number; deleted_bytes: number }>('/admin/model-traces/cleanup', { confirm: true })
   return data
 }
 
-export const modelTraceAPI = { list, getDetail, getPayload, getConfig, updateConfig, previewCleanup, runCleanup }
+export const modelTraceAPI = { list, getDetail, getPayload, getConversation, recordAccessEvent, getConfig, updateConfig, previewCleanup, runCleanup }
 
 export default modelTraceAPI

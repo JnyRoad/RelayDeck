@@ -77,7 +77,7 @@ func TestCleanupServiceSkipsAutomaticRunWhenDisabled(t *testing.T) {
 
 // TestCleanupServiceDeletesExpiredTracesInBatches 验证自动清理仅作用于已到期记录，并同步留下运行摘要。
 func TestCleanupServiceDeletesExpiredTracesInBatches(t *testing.T) {
-	repository := &traceCleanupRepositoryStub{deleted: CleanupResult{DeletedTraces: 2, DeletedPayloads: 3, DeletedBytes: 2048}}
+	repository := &traceCleanupRepositoryStub{deleted: CleanupResult{DeletedTraces: 2, DeletedAttempts: 4, DeletedPayloads: 3, DeletedBytes: 2048}}
 	service := NewCleanupService(traceConfigStoreStub{config: TraceConfig{AutoCleanupEnabled: true, RetentionDays: 7}}, repository)
 	fixedNow := time.Date(2026, time.September, 3, 12, 0, 0, 0, time.UTC)
 	service.now = func() time.Time { return fixedNow }
@@ -87,7 +87,7 @@ func TestCleanupServiceDeletesExpiredTracesInBatches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run automatic cleanup: %v", err)
 	}
-	if result.DeletedTraces != 2 || result.DeletedPayloads != 3 || result.DeletedBytes != 2048 {
+	if result.DeletedTraces != 2 || result.DeletedAttempts != 4 || result.DeletedPayloads != 3 || result.DeletedBytes != 2048 {
 		t.Fatalf("cleanup result=%#v", result)
 	}
 	if repository.deleteCalls != 1 || repository.startedRuns != 1 || repository.finishedRuns != 1 {

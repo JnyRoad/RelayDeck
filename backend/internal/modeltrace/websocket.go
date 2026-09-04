@@ -54,7 +54,7 @@ func NewWebSocketTurnTracer(recorder Recorder, requestID, route string) *WebSock
 		recorder:     recorder,
 		requestID:    requestID,
 		route:        route,
-		captureLimit: DefaultPayloadLimitBytes,
+		captureLimit: CompleteTextPayloadLimitBytes,
 		turns:        make(map[int]*webSocketTraceTurn),
 	}
 }
@@ -116,7 +116,7 @@ func (t *WebSocketTurnTracer) AppendClientFrame(ctx context.Context, turn int, f
 		state.responseInvalid = true
 	} else if !state.responseTooLong && !state.responseInvalid {
 		storedBytes := websocketFramesStoredBytes(state.responseFrames, frame)
-		if storedBytes > t.captureLimit {
+		if t.captureLimit >= 0 && storedBytes > t.captureLimit {
 			state.responseTooLong = true
 			state.responseFrames = nil
 		} else {
@@ -232,7 +232,7 @@ func websocketResponsePayload(state *webSocketTraceTurn, limit int) PayloadInput
 	body, err := json.Marshal(struct {
 		Frames []json.RawMessage `json:"frames"`
 	}{Frames: state.responseFrames})
-	if err != nil || len(body) > limit {
+	if err != nil || (limit >= 0 && len(body) > limit) {
 		payload.Truncated = true
 		return payload
 	}

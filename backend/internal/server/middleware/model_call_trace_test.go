@@ -210,6 +210,61 @@ func TestModelCallTraceMiddlewareCapturesResolvedIdentity(t *testing.T) {
 	}
 }
 
+// TestModelCallTraceMiddlewareCapturesHistoricalIdentitySnapshots verifies
+// that trace completion carries display-safe identity values instead of API Key
+// material, so later rename or deletion cannot erase the call attribution.
+func TestModelCallTraceMiddlewareCapturesHistoricalIdentitySnapshots(t *testing.T) {
+	groupID := int64(33)
+	recorder := &modelTraceRecorderStub{tracingActive: true}
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(NewModelCallTraceMiddleware(recorder))
+	router.Use(func(c *gin.Context) {
+		c.Set(string(ContextKeyAPIKey), &service.APIKey{
+			ID: 22, UserID: 11, Name: "dingrui-key", GroupID: &groupID,
+			User:  &service.User{ID: 11, Email: "dingrui@szyuto.com"},
+			Group: &service.Group{ID: 33, Name: "development"},
+		})
+		ctx := context.WithValue(c.Request.Context(), ctxkey.AccountID, int64(44))
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	})
+	router.POST("/v1/chat/completions", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+
+	rec := doModelTraceRequest(router, http.MethodPost, "/v1/chat/completions", `{"model":"public-model"}`)
+
+	if rec.Code != http.StatusOK || len(recorder.finished) != 1 {
+		t.Fatalf("response=%d finishes=%#v", rec.Code, recorder.finished)
+	}
+	finished := recorder.finished[0]
+	if finished.UserSnapshot != "dingrui@szyuto.com" || finished.APIKeySnapshot != "dingrui-key" || finished.GroupSnapshot != "development" || finished.AccountSnapshot != "account#44" {
+		t.Fatalf("finish snapshots = %#v", finished)
+	}
+}
+
+// TestModelCallTraceMiddlewareCapturesExplicitConversationLinks verifies that
+// the final trace stores only session and lineage values parsed from the
+// client-visible request and delivered Responses API result.
+func TestModelCallTraceMiddlewareCapturesExplicitConversationLinks(t *testing.T) {
+	recorder := &modelTraceRecorderStub{tracingActive: true}
+	router := newModelTraceTestRouter(recorder, func(c *gin.Context) {
+		if _, err := io.ReadAll(c.Request.Body); err != nil {
+			t.Fatalf("handler read request body: %v", err)
+		}
+		c.Data(http.StatusOK, "application/json", []byte(`{"object":"response","id":"resp-current"}`))
+	})
+
+	rec := doModelTraceRequest(router, http.MethodPost, "/v1/responses", `{"conversation_id":"conversation-42","previous_response_id":"resp-previous"}`)
+
+	if rec.Code != http.StatusOK || len(recorder.finished) != 1 {
+		t.Fatalf("response=%d finishes=%#v", rec.Code, recorder.finished)
+	}
+	finished := recorder.finished[0]
+	if finished.SessionID != "conversation-42" || finished.PreviousResponseID != "resp-previous" || finished.ResponseID != "resp-current" {
+		t.Fatalf("finish conversation links = %#v", finished)
+	}
+}
+
 // TestModelCallTraceMiddlewarePersistsAfterClientCancellation verifies that a
 // cancellation changes the trace outcome but does not cancel final trace I/O.
 func TestModelCallTraceMiddlewarePersistsAfterClientCancellation(t *testing.T) {

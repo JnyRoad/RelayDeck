@@ -17,6 +17,18 @@ type traceQueryRepositoryStub struct {
 	err     error
 }
 
+// traceConversationRepositoryStub adds an explicit replay result to the base
+// query stub so conversation tests do not imply a database implementation.
+type traceConversationRepositoryStub struct {
+	traceQueryRepositoryStub
+	conversation TraceConversation
+}
+
+// GetConversation returns only the explicitly linked turns prepared by the test.
+func (s traceConversationRepositoryStub) GetConversation(context.Context, string) (TraceConversation, error) {
+	return s.conversation, s.err
+}
+
 // ListTraces 返回测试预置的分页索引结果。
 func (s traceQueryRepositoryStub) ListTraces(context.Context, TraceFilter, int, int) ([]TraceSummary, int64, error) {
 	return s.items, s.total, s.err
@@ -126,6 +138,38 @@ func TestQueryServiceReadsOnlySelectedPayload(t *testing.T) {
 	}
 }
 
+// TestQueryServiceReturnsOnlyExplicitConversationTurns verifies that chat
+// replay preserves the repository's exact lineage result and does not merge
+// nearby records or decrypt any payload while building the replay index.
+func TestQueryServiceReturnsOnlyExplicitConversationTurns(t *testing.T) {
+	service := NewQueryService(traceConversationRepositoryStub{conversation: TraceConversation{
+		CurrentTraceID: "trace-middle",
+		Linked:         true,
+		LinkSource:     "response_lineage",
+		Turns: []TraceDetail{
+			{Trace: TraceSummary{TraceID: "trace-first", ResponseID: "resp-first"}},
+			{Trace: TraceSummary{TraceID: "trace-middle", PreviousResponseID: "resp-first", ResponseID: "resp-middle"}},
+			{Trace: TraceSummary{TraceID: "trace-last", PreviousResponseID: "resp-middle"}},
+		},
+	}}, traceDecryptorStub{plaintext: "must-not-decrypt"})
+
+	conversation, err := service.Conversation(context.Background(), "trace-middle")
+
+	if err != nil {
+		t.Fatalf("get conversation: %v", err)
+	}
+	if !conversation.Linked || conversation.CurrentTraceID != "trace-middle" || len(conversation.Turns) != 3 {
+		t.Fatalf("conversation = %#v", conversation)
+	}
+	for _, turn := range conversation.Turns {
+		for _, payload := range turn.Payloads {
+			if payload.Content != "" || payload.Ciphertext != "" {
+				t.Fatalf("conversation unexpectedly loaded payload content: %#v", payload)
+			}
+		}
+	}
+}
+
 // TestModelTraceWhereSupportsDocumentedFilters verifies that every documented
 // index-only filter becomes a parameterized predicate without opening payloads.
 func TestModelTraceWhereSupportsDocumentedFilters(t *testing.T) {
@@ -143,4 +187,44 @@ func TestModelTraceWhereSupportsDocumentedFilters(t *testing.T) {
 	if len(arguments) != 3 || arguments[0] != "trace-filter" || arguments[1] != "websocket" || arguments[2] != "truncated" {
 		t.Fatalf("filter arguments = %#v", arguments)
 	}
+}
+
+// TestModelTraceWhereSearchesHistoricalAttributionSnapshots verifies that
+// renamed or deleted users and API Keys remain searchable through their
+// non-sensitive call-time display snapshots without joining payload rows.
+func TestModelTraceWhereSearchesHistoricalAttributionSnapshots(t *testing.T) {
+	where, arguments := modelTraceWhere(TraceFilter{
+		User:          "dingrui@szyuto.com",
+		APIKey:        "dingrui-key",
+		SessionID:     "conversation-42",
+		UpstreamModel: "gpt-5.6-terra",
+	})
+
+	for _, clause := range []string{
+		"t.user_snapshot ILIKE $1",
+		"t.api_key_snapshot ILIKE $2",
+		"t.session_id=$3",
+		"t.upstream_model ILIKE $4",
+	} {
+		if !strings.Contains(where, clause) {
+			t.Fatalf("where clause = %q, missing %q", where, clause)
+		}
+	}
+	if want := []any{"%dingrui@szyuto.com%", "%dingrui-key%", "conversation-42", "%gpt-5.6-terra%"}; !equalTraceFilterArguments(arguments, want) {
+		t.Fatalf("filter arguments = %#v, want %#v", arguments, want)
+	}
+}
+
+// equalTraceFilterArguments compares short literal query argument lists while
+// keeping the assertion independent from the production SQL builder.
+func equalTraceFilterArguments(got, want []any) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for index := range got {
+		if got[index] != want[index] {
+			return false
+		}
+	}
+	return true
 }

@@ -53,13 +53,32 @@ func TestSettingsConfigStoreDefaultsToDisabled(t *testing.T) {
 
 // TestSettingsConfigStoreRejectsUnsafeRetention 验证持久化配置不能绕过保留期上限。
 func TestSettingsConfigStoreRejectsUnsafeRetention(t *testing.T) {
-	repository := &traceSettingsRepositoryStub{value: `{"enabled":true,"payload_capture_enabled":true,"auto_cleanup_enabled":true,"retention_days":91}`}
+	for _, raw := range []string{
+		`{"enabled":true,"payload_capture_enabled":true,"auto_cleanup_enabled":true,"retention_days":366}`,
+		`{"enabled":true,"payload_capture_enabled":true,"auto_cleanup_enabled":true,"retention_days":0}`,
+		`{"enabled":true,"payload_capture_enabled":true,"auto_cleanup_enabled":true,"retention_days":-1}`,
+		`{"enabled":true,"payload_capture_enabled":true,"auto_cleanup_enabled":true,"retention_days":1.5}`,
+	} {
+		store := NewSettingsConfigStore(&traceSettingsRepositoryStub{value: raw})
+		if _, err := store.Load(context.Background()); err == nil {
+			t.Fatalf("load invalid retention config %s succeeded", raw)
+		}
+	}
+}
+
+// TestSettingsConfigStoreAcceptsMaximumConfiguredRetention verifies that the
+// administrator may choose the agreed 365-day upper bound for complete text.
+func TestSettingsConfigStoreAcceptsMaximumConfiguredRetention(t *testing.T) {
+	repository := &traceSettingsRepositoryStub{value: `{"enabled":true,"payload_capture_enabled":true,"auto_cleanup_enabled":true,"retention_days":365}`}
 	store := NewSettingsConfigStore(repository)
 
-	_, err := store.Load(context.Background())
+	config, err := store.Load(context.Background())
 
-	if err == nil {
-		t.Fatal("load invalid retention config succeeded")
+	if err != nil {
+		t.Fatalf("load 365-day trace config: %v", err)
+	}
+	if config.RetentionDays != 365 {
+		t.Fatalf("retention_days=%d, want 365", config.RetentionDays)
 	}
 }
 

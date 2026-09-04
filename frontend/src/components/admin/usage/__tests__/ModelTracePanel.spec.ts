@@ -3,10 +3,8 @@ import { flushPromises, mount } from '@vue/test-utils'
 
 import ModelTracePanel from '../ModelTracePanel.vue'
 
-const { list, getDetail, getPayload, getConfig, updateConfig, previewCleanup, runCleanup } = vi.hoisted(() => ({
+const { list, getConfig, updateConfig, previewCleanup, runCleanup } = vi.hoisted(() => ({
   list: vi.fn(),
-  getDetail: vi.fn(),
-  getPayload: vi.fn(),
   getConfig: vi.fn(),
   updateConfig: vi.fn(),
   previewCleanup: vi.fn(),
@@ -14,7 +12,7 @@ const { list, getDetail, getPayload, getConfig, updateConfig, previewCleanup, ru
 }))
 
 vi.mock('@/api/admin/modelTrace', () => ({
-  modelTraceAPI: { list, getDetail, getPayload, getConfig, updateConfig, previewCleanup, runCleanup },
+  modelTraceAPI: { list, getConfig, updateConfig, previewCleanup, runCleanup },
 }))
 
 vi.mock('vue-i18n', () => ({
@@ -25,36 +23,37 @@ describe('ModelTracePanel', () => {
   beforeEach(() => {
     list.mockReset().mockResolvedValue({ items: [{
       trace_id: 'trace-list', route: '/v1/chat/completions', requested_model: 'gpt-test',
+      user_snapshot: 'dingrui@szyuto.com', api_key_snapshot: 'sk-user-key',
       outcome: 'succeeded', status_code: 200, created_at: '2026-09-03T12:00:00Z',
       request_capture_status: 'redacted', response_capture_status: 'redacted',
     }], total: 1, page: 1, page_size: 20, pages: 1 })
     getConfig.mockReset().mockResolvedValue({ enabled: false, payload_capture_enabled: false, auto_cleanup_enabled: false, retention_days: 7 })
-    getDetail.mockReset().mockResolvedValue({
-      trace: { trace_id: 'trace-list' },
-      payloads: [{ kind: 'client_request', attempt_no: 0, content_status: 'available' }],
-    })
-	getPayload.mockReset().mockResolvedValue({ kind: 'client_request', attempt_no: 0, content_status: 'available', content: '{"prompt":"[REDACTED]"}', ciphertext: 'must-not-render' })
     updateConfig.mockReset()
     previewCleanup.mockReset()
     runCleanup.mockReset()
   })
 
-  it('loads lightweight rows, then reveals only safe detail content on demand', async () => {
-    const wrapper = mount(ModelTracePanel)
+  it('filters lightweight rows by owner or key and opens the independent conversation dialog', async () => {
+    const wrapper = mount(ModelTracePanel, {
+      global: { stubs: { ModelTraceDetailDialog: { props: ['show', 'traceId'], template: '<div data-testid="trace-dialog" :data-open="String(show)" :data-trace-id="traceId" />' } } },
+    })
     await flushPromises()
 
     expect(list).toHaveBeenCalledWith(expect.objectContaining({ page: 1, page_size: 20 }))
     expect(wrapper.text()).toContain('gpt-test')
+    expect(wrapper.text()).toContain('dingrui@szyuto.com')
+    expect(wrapper.text()).toContain('sk-user-key')
+
+    await wrapper.get('[data-testid="model-trace-filter-user"]').setValue('dingrui')
+    await wrapper.get('[data-testid="model-trace-filter-key"]').setValue('sk-user')
+    await wrapper.get('[data-testid="model-trace-search"]').trigger('click')
+    await flushPromises()
+    expect(list).toHaveBeenLastCalledWith(expect.objectContaining({ user: 'dingrui', api_key: 'sk-user' }))
 
     await wrapper.get('[data-testid="model-trace-row-trace-list"]').trigger('click')
     await flushPromises()
-		await wrapper.get('[data-testid="model-trace-payload-client_request-0"]').trigger('click')
-		await flushPromises()
-
-    expect(getDetail).toHaveBeenCalledWith('trace-list')
-		expect(getPayload).toHaveBeenCalledWith('trace-list', 'client_request', 0)
-    expect(wrapper.text()).toContain('[REDACTED]')
-    expect(wrapper.text()).not.toContain('must-not-render')
+    expect(wrapper.get('[data-testid="trace-dialog"]').attributes('data-open')).toBe('true')
+    expect(wrapper.get('[data-testid="trace-dialog"]').attributes('data-trace-id')).toBe('trace-list')
   })
 
   it('persists the retention and auto-cleanup switches as one explicit config update', async () => {
@@ -69,6 +68,20 @@ describe('ModelTracePanel', () => {
     await wrapper.get('[data-testid="model-trace-save"]').trigger('click')
 
     expect(updateConfig).toHaveBeenCalledWith({ enabled: true, payload_capture_enabled: true, auto_cleanup_enabled: false, retention_days: 14 })
+  })
+
+  it('allows at most 365 retention days and blocks an out-of-range save in the browser', async () => {
+    const wrapper = mount(ModelTracePanel)
+    await flushPromises()
+
+    const retention = wrapper.get('[data-testid="model-trace-retention-days"]')
+    expect(retention.attributes('min')).toBe('1')
+    expect(retention.attributes('max')).toBe('365')
+    await retention.setValue(366)
+    await wrapper.get('[data-testid="model-trace-save"]').trigger('click')
+
+    expect(updateConfig).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('admin.modelTrace.errors.retention')
   })
 
   it('uses a native button to make opening a trace keyboard operable', async () => {
@@ -88,32 +101,13 @@ describe('ModelTracePanel', () => {
     const wrapper = mount(ModelTracePanel)
     await flushPromises()
 
-    await wrapper.get('button.btn.btn-secondary').trigger('click')
+    await wrapper.get('[data-testid="model-trace-search"]').trigger('click')
     await flushPromises()
 		resolveFirst({ items: [{ trace_id: 'trace-old', route: '/v1/responses', requested_model: 'old-model', outcome: 'succeeded', created_at: '2026-09-03T12:00:00Z', request_capture_status: 'redacted', response_capture_status: 'redacted' }], total: 1, page: 1, page_size: 20, pages: 1 })
     await flushPromises()
 
     expect(wrapper.text()).toContain('new-model')
     expect(wrapper.text()).not.toContain('old-model')
-  })
-
-  it('ignores an older detail response after the same trace is reopened', async () => {
-    let resolveFirst: (value: any) => void = () => undefined
-    const first = new Promise<any>((resolve) => { resolveFirst = resolve })
-    getDetail.mockReset()
-      .mockReturnValueOnce(first)
-      .mockResolvedValueOnce({ trace: { trace_id: 'trace-new-detail' }, payloads: [] })
-    const wrapper = mount(ModelTracePanel)
-    await flushPromises()
-
-    await wrapper.get('[data-testid="model-trace-row-trace-list"]').trigger('click')
-    await wrapper.get('[data-testid="model-trace-row-trace-list"]').trigger('click')
-    await flushPromises()
-		resolveFirst({ trace: { trace_id: 'trace-old-detail' }, payloads: [] })
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('trace-new-detail')
-    expect(wrapper.text()).not.toContain('trace-old-detail')
   })
 
   it('does not overwrite a saved config with a pre-save config read', async () => {
@@ -131,7 +125,7 @@ describe('ModelTracePanel', () => {
     await wrapper.get('[data-testid="model-trace-enabled"]').setValue(true)
     await wrapper.get('[data-testid="model-trace-retention-days"]').setValue(14)
     await wrapper.get('[data-testid="model-trace-save"]').trigger('click')
-    await wrapper.get('button.btn.btn-secondary').trigger('click')
+    await wrapper.get('[data-testid="model-trace-search"]').trigger('click')
     await flushPromises()
     resolveSave({ enabled: true, payload_capture_enabled: false, auto_cleanup_enabled: true, retention_days: 14 })
     await flushPromises()

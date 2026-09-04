@@ -114,13 +114,77 @@ func (r *PostgresRepository) FinishTrace(ctx context.Context, record TraceFinish
 			group_id=COALESCE($12, group_id),
 			account_id=COALESCE($13, account_id),
 			requested_model=CASE WHEN $14 <> '' THEN $14 ELSE requested_model END,
-			upstream_model=CASE WHEN $15 <> '' THEN $15 ELSE upstream_model END
+			upstream_model=CASE WHEN $15 <> '' THEN $15 ELSE upstream_model END,
+			user_snapshot=CASE WHEN $16 <> '' THEN $16 ELSE user_snapshot END,
+			api_key_snapshot=CASE WHEN $17 <> '' THEN $17 ELSE api_key_snapshot END,
+			group_snapshot=CASE WHEN $18 <> '' THEN $18 ELSE group_snapshot END,
+			account_snapshot=CASE WHEN $19 <> '' THEN $19 ELSE account_snapshot END,
+			session_id=CASE WHEN $20 <> '' THEN $20 ELSE session_id END,
+			previous_response_id=CASE WHEN $21 <> '' THEN $21 ELSE previous_response_id END,
+			response_id=CASE WHEN $22 <> '' THEN $22 ELSE response_id END
 		WHERE trace_id=$1
 	`, record.TraceID, string(record.Outcome), record.StatusCode, record.Stream, record.DurationMS,
 		firstByteMS, record.RequestBytes, record.ResponseBytes, time.Now().UTC(), record.UserID,
-		record.APIKeyID, record.GroupID, record.AccountID, record.RequestedModel, record.UpstreamModel)
+		record.APIKeyID, record.GroupID, record.AccountID, record.RequestedModel, record.UpstreamModel,
+		record.UserSnapshot, record.APIKeySnapshot, record.GroupSnapshot, record.AccountSnapshot,
+		record.SessionID, record.PreviousResponseID, record.ResponseID)
 	if err != nil {
 		return fmt.Errorf("finish model trace: %w", err)
+	}
+	return nil
+}
+
+// CreateAttempt inserts one occurrence at the shared upstream transport
+// boundary. It resolves the root ID in SQL so callers never handle database
+// primary keys or encrypted payload values.
+func (r *PostgresRepository) CreateAttempt(ctx context.Context, record TraceAttemptRecord) error {
+	if r == nil || r.db == nil {
+		return fmt.Errorf("model trace database is unavailable")
+	}
+	if record.AttemptNo < 1 {
+		return fmt.Errorf("model trace upstream attempt number is invalid")
+	}
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO model_call_trace_attempts (
+			model_call_trace_id, attempt_no, account_id, account_snapshot,
+			upstream_route, upstream_model, started_at
+		)
+		SELECT id, $2, $3, $4, $5, $6, $7
+		FROM model_call_traces
+		WHERE trace_id=$1
+	`, record.TraceID, record.AttemptNo, record.AccountID, record.AccountSnapshot,
+		record.UpstreamRoute, record.UpstreamModel, record.StartedAt)
+	if err != nil {
+		return fmt.Errorf("insert model trace upstream attempt: %w", err)
+	}
+	return nil
+}
+
+// FinishAttempt records a shared transport result after its response body has
+// been consumed or closed. It never touches payload ciphertext.
+func (r *PostgresRepository) FinishAttempt(ctx context.Context, record TraceAttemptFinishRecord) error {
+	if r == nil || r.db == nil {
+		return fmt.Errorf("model trace database is unavailable")
+	}
+	if record.AttemptNo < 1 {
+		return fmt.Errorf("model trace upstream attempt number is invalid")
+	}
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE model_call_trace_attempts attempt
+		SET outcome=$3,
+			status_code=NULLIF($4, 0),
+			error_stage=$5,
+			error_code=$6,
+			duration_ms=$7,
+			completed_at=$8
+		FROM model_call_traces trace
+		WHERE trace.id=attempt.model_call_trace_id
+			AND trace.trace_id=$1
+			AND attempt.attempt_no=$2
+	`, record.TraceID, record.AttemptNo, string(record.Outcome), record.StatusCode,
+		record.ErrorStage, record.ErrorCode, record.DurationMS, record.CompletedAt)
+	if err != nil {
+		return fmt.Errorf("finish model trace upstream attempt: %w", err)
 	}
 	return nil
 }

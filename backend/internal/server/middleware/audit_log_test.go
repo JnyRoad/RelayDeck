@@ -3,6 +3,7 @@ package middleware
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -223,4 +224,73 @@ func TestOllamaCloudUsageSessionRouteOmitsAuditBody(t *testing.T) {
 	require.Len(t, logs, 1)
 	require.Equal(t, "<credential-bearing body omitted>", logs[0].RequestBody)
 	require.NotContains(t, logs[0].RequestBody, "audit-canary")
+}
+
+// TestModelTraceReadsAndCopyAreAuditedWithoutTraceContent verifies that
+// protected trace inspection routes are auditable while neither the audit
+// body nor its extra fields can contain a prompt or model response.
+func TestModelTraceReadsAndCopyAreAuditedWithoutTraceContent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repository := &auditCaptureRepository{}
+	auditService := service.NewAuditLogService(repository, nil)
+	auditService.Start()
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(string(ContextKeyUser), AuthSubject{UserID: 77})
+		c.Set(string(ContextKeyUserRole), "admin")
+		c.Next()
+	})
+	router.Use(gin.HandlerFunc(NewAuditLogMiddleware(auditService)))
+	router.GET("/api/v1/admin/model-traces/:traceID", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+	router.GET("/api/v1/admin/model-traces/:traceID/conversation", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+	router.GET("/api/v1/admin/model-traces/:traceID/payloads/:kind", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+	router.POST("/api/v1/admin/model-traces/:traceID/access-events", func(c *gin.Context) {
+		SetAuditAction(c, "admin.model_traces.payload.copy")
+		SetAuditExtra(c, map[string]any{"trace_id": c.Param("traceID"), "payload_kind": "client_request", "attempt_no": 0})
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+	router.POST("/api/v1/admin/model-traces/cleanup", func(c *gin.Context) {
+		SetAuditAction(c, "admin.model_traces.cleanup")
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+
+	for _, request := range []*http.Request{
+		httptest.NewRequest(http.MethodGet, "/api/v1/admin/model-traces/trace-a", nil),
+		httptest.NewRequest(http.MethodGet, "/api/v1/admin/model-traces/trace-a/conversation", nil),
+		httptest.NewRequest(http.MethodGet, "/api/v1/admin/model-traces/trace-a/payloads/client_request?attempt_no=0", nil),
+		httptest.NewRequest(http.MethodPost, "/api/v1/admin/model-traces/trace-a/access-events", bytes.NewBufferString(`{"action":"copy","kind":"client_request","attempt_no":0,"content":"audit-canary-prompt"}`)),
+		httptest.NewRequest(http.MethodPost, "/api/v1/admin/model-traces/cleanup", bytes.NewBufferString(`{"confirm":true}`)),
+	} {
+		request.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+		require.Equal(t, http.StatusOK, recorder.Code)
+	}
+	auditService.Stop()
+
+	repository.mu.Lock()
+	logs := append([]*service.AuditLog(nil), repository.logs...)
+	repository.mu.Unlock()
+	require.Len(t, logs, 5)
+
+	actions := make(map[string]*service.AuditLog, len(logs))
+	for _, entry := range logs {
+		actions[entry.Action] = entry
+		require.NotContains(t, entry.RequestBody, "audit-canary-prompt")
+		extra, err := json.Marshal(entry.Extra)
+		require.NoError(t, err)
+		require.NotContains(t, string(extra), "audit-canary-prompt")
+	}
+	require.Contains(t, actions, "admin.model_traces.read")
+	require.Contains(t, actions, "admin.model_traces.conversation.read")
+	require.Contains(t, actions, "admin.model_traces.payload.read")
+	require.Contains(t, actions, "admin.model_traces.payload.copy")
+	require.Contains(t, actions, "admin.model_traces.cleanup")
 }

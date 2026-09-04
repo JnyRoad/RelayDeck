@@ -14,9 +14,13 @@ type TraceFilter struct {
 	APIKeyID       *int64
 	GroupID        *int64
 	AccountID      *int64
+	User           string
+	APIKey         string
 	RequestID      string
+	SessionID      string
 	Route          string
 	RequestedModel string
+	UpstreamModel  string
 	Protocol       string
 	Outcome        Outcome
 	CaptureStatus  CaptureStatus
@@ -32,6 +36,13 @@ type TraceSummary struct {
 	APIKeyID              *int64        `json:"api_key_id,omitempty"`
 	GroupID               *int64        `json:"group_id,omitempty"`
 	AccountID             *int64        `json:"account_id,omitempty"`
+	UserSnapshot          string        `json:"user_snapshot"`
+	APIKeySnapshot        string        `json:"api_key_snapshot"`
+	GroupSnapshot         string        `json:"group_snapshot"`
+	AccountSnapshot       string        `json:"account_snapshot"`
+	SessionID             string        `json:"session_id"`
+	PreviousResponseID    string        `json:"previous_response_id"`
+	ResponseID            string        `json:"response_id"`
 	Route                 string        `json:"route"`
 	Protocol              string        `json:"protocol"`
 	RequestedModel        string        `json:"requested_model"`
@@ -66,10 +77,39 @@ type TracePayload struct {
 	Ciphertext    string        `json:"-"`
 }
 
-// TraceDetail 组合一条调用索引及其按需展示的客户端可见正文。
+// TraceAttempt is one ordered upstream dispatch metadata record. It contains
+// neither headers nor body text; the matching selected payload remains an
+// independent, on-demand read.
+type TraceAttempt struct {
+	AttemptNo       int        `json:"attempt_no"`
+	AccountID       *int64     `json:"account_id,omitempty"`
+	AccountSnapshot string     `json:"account_snapshot"`
+	UpstreamRoute   string     `json:"upstream_route"`
+	UpstreamModel   string     `json:"upstream_model"`
+	Outcome         Outcome    `json:"outcome"`
+	StatusCode      *int       `json:"status_code,omitempty"`
+	ErrorStage      string     `json:"error_stage"`
+	ErrorCode       string     `json:"error_code"`
+	DurationMS      *int       `json:"duration_ms,omitempty"`
+	StartedAt       time.Time  `json:"started_at"`
+	CompletedAt     *time.Time `json:"completed_at,omitempty"`
+}
+
+// TraceDetail combines one call index, ordered upstream attempt metadata, and
+// body metadata. It never contains ciphertext or content until a body is read.
 type TraceDetail struct {
 	Trace    TraceSummary   `json:"trace"`
+	Attempts []TraceAttempt `json:"attempts"`
 	Payloads []TracePayload `json:"payloads"`
+}
+
+// TraceConversation contains only calls joined by one explicit client session
+// identifier or exact Responses API parent-child lineage.
+type TraceConversation struct {
+	CurrentTraceID string        `json:"current_trace_id"`
+	Linked         bool          `json:"linked"`
+	LinkSource     string        `json:"link_source"`
+	Turns          []TraceDetail `json:"turns"`
 }
 
 // TraceQueryRepository 是查询索引和密文的只读存储边界。
@@ -77,6 +117,12 @@ type TraceQueryRepository interface {
 	ListTraces(ctx context.Context, filter TraceFilter, page, pageSize int) ([]TraceSummary, int64, error)
 	GetTrace(ctx context.Context, traceID string) (TraceDetail, error)
 	GetPayload(ctx context.Context, traceID string, kind PayloadKind, attemptNo int) (TracePayload, error)
+}
+
+// TraceConversationRepository is an optional read boundary for repositories
+// that can resolve protocol-confirmed replay turns without loading bodies.
+type TraceConversationRepository interface {
+	GetConversation(ctx context.Context, traceID string) (TraceConversation, error)
 }
 
 // Decryptor 只在管理员查看单条详情时按需解开已脱敏的正文。
@@ -131,6 +177,34 @@ func (s *QueryService) Detail(ctx context.Context, traceID string) (TraceDetail,
 	return detail, nil
 }
 
+// Conversation returns only the repository-proven replay turns and leaves all
+// payload ciphertext unread until the administrator selects an individual body.
+func (s *QueryService) Conversation(ctx context.Context, traceID string) (TraceConversation, error) {
+	if s == nil || s.repository == nil {
+		return TraceConversation{}, fmt.Errorf("model trace query repository is unavailable")
+	}
+	traceID = strings.TrimSpace(traceID)
+	if traceID == "" {
+		return TraceConversation{}, fmt.Errorf("model trace id is required")
+	}
+	repository, ok := s.repository.(TraceConversationRepository)
+	if !ok {
+		return TraceConversation{}, fmt.Errorf("model trace conversation query is unavailable")
+	}
+	conversation, err := repository.GetConversation(ctx, traceID)
+	if err != nil {
+		return TraceConversation{}, err
+	}
+	for turnIndex := range conversation.Turns {
+		for payloadIndex := range conversation.Turns[turnIndex].Payloads {
+			payload := &conversation.Turns[turnIndex].Payloads[payloadIndex]
+			payload.ContentStatus = payloadContentStatus(*payload)
+			payload.Ciphertext = ""
+		}
+	}
+	return conversation, nil
+}
+
 // Payload decrypts exactly one administrator-selected payload after the
 // detail header has already identified its kind and attempt number.
 func (s *QueryService) Payload(ctx context.Context, traceID string, kind PayloadKind, attemptNo int) (TracePayload, error) {
@@ -171,6 +245,28 @@ func (s *QueryService) Payload(ctx context.Context, traceID string, kind Payload
 	return payload, nil
 }
 
+// HasPayloadMetadata confirms a selected payload exists without requesting,
+// decrypting, or returning its ciphertext or body content.
+func (s *QueryService) HasPayloadMetadata(ctx context.Context, traceID string, kind PayloadKind, attemptNo int) (bool, error) {
+	if s == nil || s.repository == nil {
+		return false, fmt.Errorf("model trace query repository is unavailable")
+	}
+	traceID = strings.TrimSpace(traceID)
+	if traceID == "" || !isStoredPayloadKind(kind) || attemptNo < 0 {
+		return false, nil
+	}
+	detail, err := s.Detail(ctx, traceID)
+	if err != nil {
+		return false, err
+	}
+	for _, payload := range detail.Payloads {
+		if payload.Kind == kind && payload.AttemptNo == attemptNo {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // payloadContentStatus derives the UI-safe availability hint without loading
 // ciphertext. Only complete or redacted records may have readable content.
 func payloadContentStatus(payload TracePayload) string {
@@ -185,8 +281,15 @@ func payloadContentStatus(payload TracePayload) string {
 // isReadablePayloadKind limits plaintext access to the client-visible body
 // types promised by the administrator API contract.
 func isReadablePayloadKind(kind PayloadKind) bool {
+	return isStoredPayloadKind(kind)
+}
+
+// isStoredPayloadKind accepts every representation that may be attached to a
+// trace, including upstream kinds that become readable in the raw-chain view.
+func isStoredPayloadKind(kind PayloadKind) bool {
 	switch kind {
-	case PayloadKindClientRequest, PayloadKindClientResponse, PayloadKindErrorResponse:
+	case PayloadKindClientRequest, PayloadKindClientResponse, PayloadKindErrorResponse,
+		PayloadKindUpstreamRequest, PayloadKindUpstreamResponse, PayloadKindUpstreamError:
 		return true
 	default:
 		return false

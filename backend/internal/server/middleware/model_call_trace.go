@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"hash"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/JnyRoad/RelayDeck/internal/modeltrace"
 	"github.com/JnyRoad/RelayDeck/internal/pkg/ctxkey"
+	"github.com/JnyRoad/RelayDeck/internal/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -36,10 +38,13 @@ func NewModelCallTraceMiddleware(recorder modeltrace.Recorder) gin.HandlerFunc {
 			c.Next()
 			return
 		}
+		if observer := modeltrace.NewUpstreamAttemptObserver(recorder, handle); observer != nil {
+			c.Request = c.Request.WithContext(modeltrace.WithUpstreamAttemptObserver(c.Request.Context(), observer))
+		}
 
-		requestCapture := newBoundedBodyCapture(c.Request.Body, modeltrace.DefaultPayloadLimitBytes)
+		requestCapture := newBoundedBodyCapture(c.Request.Body, modeltrace.CompleteTextPayloadLimitBytes)
 		c.Request.Body = requestCapture
-		responseCapture := newTraceResponseWriter(c.Writer, modeltrace.DefaultPayloadLimitBytes)
+		responseCapture := newTraceResponseWriter(c.Writer, modeltrace.CompleteTextPayloadLimitBytes)
 		c.Writer = responseCapture
 
 		c.Next()
@@ -65,6 +70,10 @@ func NewModelCallTraceMiddleware(recorder modeltrace.Recorder) gin.HandlerFunc {
 			RequestBytes:  requestPayload.OriginalBytes,
 			ResponseBytes: responsePayload.OriginalBytes,
 		}
+		links := modeltrace.ExtractConversationLinks(requestPayload.ContentType, requestPayload.Body, responsePayload.ContentType, responsePayload.Body)
+		finishInput.SessionID = links.SessionID
+		finishInput.PreviousResponseID = links.PreviousResponseID
+		finishInput.ResponseID = links.ResponseID
 		populateTraceFinishIdentity(c, &finishInput)
 		_ = recorder.Finish(traceCtx, handle, finishInput)
 	}
@@ -85,25 +94,66 @@ func populateTraceFinishIdentity(c *gin.Context, input *modeltrace.FinishInput) 
 		return
 	}
 	if apiKey, ok := GetAPIKeyFromContext(c); ok && apiKey != nil {
-		input.UserID = positiveTraceID(apiKey.UserID)
-		input.APIKeyID = positiveTraceID(apiKey.ID)
-		input.GroupID = apiKey.GroupID
+		populateTraceAPIKeyIdentity(input, apiKey)
 	} else if apiKey, ok := GetOpsFallbackAPIKey(c); ok && apiKey != nil {
-		input.UserID = positiveTraceID(apiKey.UserID)
-		input.APIKeyID = positiveTraceID(apiKey.ID)
-		input.GroupID = apiKey.GroupID
+		populateTraceAPIKeyIdentity(input, apiKey)
 	}
 	if c.Request == nil {
 		return
 	}
 	if accountID, ok := c.Request.Context().Value(ctxkey.AccountID).(int64); ok {
 		input.AccountID = positiveTraceID(accountID)
+		input.AccountSnapshot = traceIdentitySnapshot("account", "", accountID)
 	}
 	input.RequestedModel = traceContextString(c, ctxkey.RequestedPublicModel)
 	if input.RequestedModel == "" {
 		input.RequestedModel = traceContextString(c, ctxkey.Model)
 	}
 	input.UpstreamModel = traceContextString(c, ctxkey.ResolvedUpstreamModel)
+}
+
+// populateTraceAPIKeyIdentity copies only durable display identifiers from a
+// resolved API Key; the credential string itself is deliberately never read.
+func populateTraceAPIKeyIdentity(input *modeltrace.FinishInput, apiKey *service.APIKey) {
+	if input == nil || apiKey == nil {
+		return
+	}
+	input.UserID = positiveTraceID(apiKey.UserID)
+	input.APIKeyID = positiveTraceID(apiKey.ID)
+	input.GroupID = apiKey.GroupID
+	userName := ""
+	if apiKey.User != nil {
+		userName = apiKey.User.Email
+		if userName == "" {
+			userName = apiKey.User.Username
+		}
+	}
+	input.UserSnapshot = traceIdentitySnapshot("user", userName, apiKey.UserID)
+	input.APIKeySnapshot = traceIdentitySnapshot("api-key", apiKey.Name, apiKey.ID)
+	groupName := ""
+	if apiKey.Group != nil {
+		groupName = apiKey.Group.Name
+	}
+	if apiKey.GroupID != nil {
+		input.GroupSnapshot = traceIdentitySnapshot("group", groupName, *apiKey.GroupID)
+	}
+}
+
+// traceIdentitySnapshot normalizes a bounded display value and falls back to
+// a non-secret type-and-ID label when a cached relation lacks its name.
+func traceIdentitySnapshot(kind, value string, identifier int64) string {
+	value = strings.TrimSpace(value)
+	if value != "" {
+		characters := []rune(value)
+		if len(characters) > 320 {
+			return string(characters[:320])
+		}
+		return value
+	}
+	if identifier <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s#%d", kind, identifier)
 }
 
 // positiveTraceID 转换有效关联键为指针，避免将零值写入外键字段。
@@ -160,15 +210,17 @@ func (c *boundedBodyCapture) Read(buffer []byte) (int, error) {
 	}
 	_, _ = c.digest.Write(buffer[:read])
 	c.total += int64(read)
-	remaining := c.limit - len(c.body)
-	if remaining <= 0 {
-		c.truncated = true
-		return read, err
-	}
-	if read > remaining {
-		c.body = append(c.body, buffer[:remaining]...)
-		c.truncated = true
-		return read, err
+	if c.limit >= 0 {
+		remaining := c.limit - len(c.body)
+		if remaining <= 0 {
+			c.truncated = true
+			return read, err
+		}
+		if read > remaining {
+			c.body = append(c.body, buffer[:remaining]...)
+			c.truncated = true
+			return read, err
+		}
 	}
 	c.body = append(c.body, buffer[:read]...)
 	return read, err
@@ -239,15 +291,17 @@ func (w *traceResponseWriter) record(body []byte) {
 	}
 	_, _ = w.capture.digest.Write(body)
 	w.capture.total += int64(len(body))
-	remaining := w.capture.limit - len(w.capture.body)
-	if remaining <= 0 {
-		w.capture.truncated = true
-		return
-	}
-	if len(body) > remaining {
-		w.capture.body = append(w.capture.body, body[:remaining]...)
-		w.capture.truncated = true
-		return
+	if w.capture.limit >= 0 {
+		remaining := w.capture.limit - len(w.capture.body)
+		if remaining <= 0 {
+			w.capture.truncated = true
+			return
+		}
+		if len(body) > remaining {
+			w.capture.body = append(w.capture.body, body[:remaining]...)
+			w.capture.truncated = true
+			return
+		}
 	}
 	w.capture.body = append(w.capture.body, body...)
 }
