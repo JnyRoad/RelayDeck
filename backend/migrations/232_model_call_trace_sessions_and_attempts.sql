@@ -17,7 +17,7 @@ ALTER TABLE model_call_trace_cleanup_runs
     DROP CONSTRAINT IF EXISTS chk_model_call_trace_cleanup_runs_nonnegative;
 ALTER TABLE model_call_trace_cleanup_runs
     ADD CONSTRAINT chk_model_call_trace_cleanup_runs_nonnegative
-        CHECK (deleted_traces >= 0 AND deleted_attempts >= 0 AND deleted_payloads >= 0 AND deleted_bytes >= 0);
+        CHECK (deleted_traces >= 0 AND deleted_attempts >= 0 AND deleted_payloads >= 0 AND deleted_bytes >= 0) NOT VALID;
 
 CREATE TABLE IF NOT EXISTS model_call_trace_attempts (
     id                  BIGSERIAL PRIMARY KEY,
@@ -56,23 +56,10 @@ ALTER TABLE model_call_payloads
             'upstream_request',
             'upstream_response',
             'upstream_error'
-        ));
+        )) NOT VALID;
 
-CREATE INDEX IF NOT EXISTS idx_model_call_traces_session_created
-    ON model_call_traces(session_id, created_at ASC, id ASC)
-    WHERE session_id <> '';
-CREATE INDEX IF NOT EXISTS idx_model_call_traces_response_id
-    ON model_call_traces(response_id)
-    WHERE response_id <> '';
-CREATE INDEX IF NOT EXISTS idx_model_call_traces_previous_response_id
-    ON model_call_traces(previous_response_id)
-    WHERE previous_response_id <> '';
-CREATE INDEX IF NOT EXISTS idx_model_call_traces_user_snapshot_created
-    ON model_call_traces(user_snapshot, created_at DESC, id DESC)
-    WHERE user_snapshot <> '';
-CREATE INDEX IF NOT EXISTS idx_model_call_traces_api_key_snapshot_created
-    ON model_call_traces(api_key_snapshot, created_at DESC, id DESC)
-    WHERE api_key_snapshot <> '';
+-- The indexes for the existing model_call_traces table are built in the
+-- following _notx migration so startup does not block trace or cleanup writes.
 CREATE INDEX IF NOT EXISTS idx_model_call_trace_attempts_trace_number
     ON model_call_trace_attempts(model_call_trace_id, attempt_no ASC);
 CREATE INDEX IF NOT EXISTS idx_model_call_trace_attempts_account_created

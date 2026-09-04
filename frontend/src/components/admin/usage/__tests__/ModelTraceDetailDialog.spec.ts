@@ -3,10 +3,11 @@ import { flushPromises, mount } from '@vue/test-utils'
 
 import ModelTraceDetailDialog from '../ModelTraceDetailDialog.vue'
 
-const { getConversation, getPayload, recordAccessEvent } = vi.hoisted(() => ({
+const { getConversation, getPayload, recordAccessEvent, writeText } = vi.hoisted(() => ({
   getConversation: vi.fn(),
   getPayload: vi.fn(),
   recordAccessEvent: vi.fn(),
+  writeText: vi.fn(),
 }))
 
 vi.mock('@/api/admin/modelTrace', () => ({
@@ -50,6 +51,8 @@ describe('ModelTraceDetailDialog', () => {
       content: `${traceID}-${kind}`,
     }))
     recordAccessEvent.mockReset().mockResolvedValue(undefined)
+    writeText.mockReset().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
   })
 
   const mountDialog = (traceId: string) => mount(ModelTraceDetailDialog, {
@@ -94,12 +97,45 @@ describe('ModelTraceDetailDialog', () => {
 
     await wrapper.get('[data-testid="model-trace-view-raw"]').trigger('click')
     const raw = wrapper.get('[data-testid="model-trace-raw-chain"]')
+    expect(raw.text().indexOf('trace-current-client_request')).toBeLessThan(raw.text().indexOf('account-first'))
     expect(raw.text().indexOf('account-first')).toBeLessThan(raw.text().indexOf('account-second'))
+    expect(raw.text().indexOf('account-second')).toBeLessThan(raw.text().indexOf('trace-current-client_response'))
     expect(raw.text()).toContain('attempt-one-hash')
     expect(getPayload).not.toHaveBeenCalled()
 
     await raw.findAll('button').find((button) => button.text().includes('admin.modelTrace.detail.loadBody'))!.trigger('click')
     await flushPromises()
     expect(getPayload).toHaveBeenCalledWith('trace-current', 'upstream_request', 1)
+  })
+
+  it('shows a terminal unavailable status instead of a loading label', async () => {
+    getConversation.mockResolvedValueOnce({
+      current_trace_id: 'trace-unavailable',
+      linked: false,
+      link_source: '',
+      turns: [{
+        trace: { trace_id: 'trace-unavailable' },
+        payloads: [{ kind: 'client_request', attempt_no: 0, content_status: 'not_captured' }],
+      }],
+    })
+    const wrapper = mountDialog('trace-unavailable')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('admin.modelTrace.detail.contentUnavailable{"status":"not_captured"}')
+    expect(wrapper.text()).not.toContain('admin.modelTrace.detail.loadingBody')
+  })
+
+  it('records the payload-copy audit event before putting content on the clipboard', async () => {
+    const order: string[] = []
+    recordAccessEvent.mockImplementation(async () => { order.push('audit') })
+    writeText.mockImplementation(async () => { order.push('clipboard') })
+    const wrapper = mountDialog('trace-current')
+    await flushPromises()
+
+    await wrapper.get('[data-testid="trace-chat-turn-trace-current"]').findAll('button').find((button) => button.text() === 'common.copy')!.trigger('click')
+
+    expect(recordAccessEvent).toHaveBeenCalledWith('trace-current', 'client_request', 0)
+    expect(writeText).toHaveBeenCalledWith('trace-current-client_request')
+    expect(order).toEqual(['audit', 'clipboard'])
   })
 })

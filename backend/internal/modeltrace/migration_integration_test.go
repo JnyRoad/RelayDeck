@@ -20,8 +20,13 @@ const modelTracePostgresTestEnv = "MODEL_TRACE_TEST_POSTGRES_DSN"
 // to a developer or production database when the test DSN is absent.
 func openModelTraceIntegrationDB(t *testing.T) *sql.DB {
 	t.Helper()
-	migrations := make([][]byte, 0, 2)
-	for _, name := range []string{"183_model_call_traces.sql", "232_model_call_trace_sessions_and_attempts.sql"} {
+	migrations := make([][]byte, 0, 4)
+	for _, name := range []string{
+		"183_model_call_traces.sql",
+		"232_model_call_trace_sessions_and_attempts.sql",
+		"233_add_model_call_trace_indexes_notx.sql",
+		"234_validate_model_call_trace_constraints.sql",
+	} {
 		migration, err := os.ReadFile(filepath.Join("..", "..", "migrations", name))
 		require.NoError(t, err)
 		migrations = append(migrations, migration)
@@ -94,7 +99,7 @@ func TestModelTraceMigrationCascadesAttempts(t *testing.T) {
 func TestModelTraceMigrationCascadesPayloads(t *testing.T) {
 	db := openModelTraceIntegrationDB(t)
 	ctx := context.Background()
-	_, err := db.ExecContext(ctx, `TRUNCATE TABLE model_call_trace_cleanup_runs, model_call_payloads, model_call_traces RESTART IDENTITY CASCADE`)
+	_, err := db.ExecContext(ctx, `TRUNCATE TABLE model_call_trace_cleanup_runs, model_call_payloads, model_call_trace_attempts, model_call_traces RESTART IDENTITY CASCADE`)
 	require.NoError(t, err)
 
 	var traceID int64
@@ -122,7 +127,7 @@ func TestModelTraceMigrationCascadesPayloads(t *testing.T) {
 func TestPostgresRepositoryListsAndReadsDetails(t *testing.T) {
 	db := openModelTraceIntegrationDB(t)
 	ctx := context.Background()
-	_, err := db.ExecContext(ctx, `TRUNCATE TABLE model_call_trace_cleanup_runs, model_call_payloads, model_call_traces RESTART IDENTITY CASCADE`)
+	_, err := db.ExecContext(ctx, `TRUNCATE TABLE model_call_trace_cleanup_runs, model_call_payloads, model_call_trace_attempts, model_call_traces RESTART IDENTITY CASCADE`)
 	require.NoError(t, err)
 
 	repository := NewPostgresRepository(db)
@@ -161,7 +166,7 @@ func TestPostgresRepositoryListsAndReadsDetails(t *testing.T) {
 func TestPostgresRepositoryPreviewsAndDeletesExpired(t *testing.T) {
 	db := openModelTraceIntegrationDB(t)
 	ctx := context.Background()
-	_, err := db.ExecContext(ctx, `TRUNCATE TABLE model_call_trace_cleanup_runs, model_call_payloads, model_call_traces RESTART IDENTITY CASCADE`)
+	_, err := db.ExecContext(ctx, `TRUNCATE TABLE model_call_trace_cleanup_runs, model_call_payloads, model_call_trace_attempts, model_call_traces RESTART IDENTITY CASCADE`)
 	require.NoError(t, err)
 
 	repository := NewPostgresRepository(db)

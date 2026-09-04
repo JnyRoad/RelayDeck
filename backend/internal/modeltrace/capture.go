@@ -285,7 +285,7 @@ func redactJSONValue(value *any, key string) bool {
 func isSensitiveField(key string) bool {
 	normalized := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(key), "-", "_"), " ", "_"))
 	switch normalized {
-	case "authorization", "api_key", "apikey", "access_token", "refresh_token", "token", "secret", "password", "cookie", "set_cookie":
+	case "authorization", "api_key", "apikey", "x_api_key", "access_token", "refresh_token", "token", "secret", "password", "cookie", "set_cookie":
 		return true
 	default:
 		return false

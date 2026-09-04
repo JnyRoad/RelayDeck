@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -28,6 +29,7 @@ import (
 // upstreamAttemptRecorderStub records the context-bound observer events while
 // keeping transport tests independent from PostgreSQL and encryption.
 type upstreamAttemptRecorderStub struct {
+	mu         sync.Mutex
 	attempts   []modeltrace.UpstreamAttemptInput
 	payloads   []modeltrace.PayloadInput
 	finishes   []modeltrace.UpstreamAttemptFinishInput
@@ -41,6 +43,8 @@ func (*upstreamAttemptRecorderStub) Start(context.Context, modeltrace.StartInput
 
 // RecordPayload captures one sanitized payload input and can fail harmlessly.
 func (s *upstreamAttemptRecorderStub) RecordPayload(_ context.Context, _ modeltrace.TraceHandle, input modeltrace.PayloadInput) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.payloads = append(s.payloads, input)
 	return s.payloadErr
 }
@@ -53,12 +57,16 @@ func (*upstreamAttemptRecorderStub) Finish(context.Context, modeltrace.TraceHand
 
 // StartUpstreamAttempt records the actual transport occurrence number.
 func (s *upstreamAttemptRecorderStub) StartUpstreamAttempt(_ context.Context, _ modeltrace.TraceHandle, input modeltrace.UpstreamAttemptInput) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.attempts = append(s.attempts, input)
 	return nil
 }
 
 // FinishUpstreamAttempt records the response terminal state without body data.
 func (s *upstreamAttemptRecorderStub) FinishUpstreamAttempt(_ context.Context, _ modeltrace.TraceHandle, input modeltrace.UpstreamAttemptFinishInput) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.finishes = append(s.finishes, input)
 	return nil
 }
@@ -96,6 +104,13 @@ func TestHTTPUpstreamDoCapturesIndependentAttemptBodies(t *testing.T) {
 		require.NoError(t, response.Body.Close())
 	}
 
+	require.Eventually(t, func() bool {
+		recorder.mu.Lock()
+		defer recorder.mu.Unlock()
+		return len(recorder.attempts) == 2 && len(recorder.payloads) == 4 && len(recorder.finishes) == 2
+	}, time.Second, 10*time.Millisecond)
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
 	require.Len(t, recorder.attempts, 2)
 	require.Equal(t, 1, recorder.attempts[0].AttemptNo)
 	require.Equal(t, 2, recorder.attempts[1].AttemptNo)

@@ -42,7 +42,7 @@
           <div class="rounded-lg border border-slate-700 bg-slate-900/80 p-3 text-slate-300">
             <p>{{ currentTurn.trace.route }} · {{ currentTurn.trace.requested_model || currentTurn.trace.response_model || '—' }}</p>
           </div>
-          <TraceRawPayload v-for="payload in rootClientPayloads" :key="payloadKey(currentTurn.trace.trace_id, payload)" :payload="payload" :content="payloadContent(currentTurn.trace.trace_id, payload)" @load="loadPayload(currentTurn.trace.trace_id, payload)" @copy="copyPayload(currentTurn.trace.trace_id, payload)" />
+          <TraceRawPayload v-for="payload in rootClientRequestPayloads" :key="payloadKey(currentTurn.trace.trace_id, payload)" :payload="payload" :content="payloadContent(currentTurn.trace.trace_id, payload)" @load="loadPayload(currentTurn.trace.trace_id, payload)" @copy="copyPayload(currentTurn.trace.trace_id, payload)" />
           <article v-for="attempt in currentTurn.attempts" :key="attempt.attempt_no" class="rounded-lg border border-slate-700 bg-slate-900/70 p-3">
             <div class="mb-2 flex flex-wrap items-center justify-between gap-2 text-slate-300">
               <span>{{ t('admin.modelTrace.detail.attempt', { number: attempt.attempt_no }) }} · {{ attempt.outcome }} · {{ attempt.status_code ?? '—' }}</span>
@@ -51,6 +51,7 @@
             <p class="mb-3 break-all text-slate-500">{{ attempt.upstream_route || '—' }}</p>
             <TraceRawPayload v-for="payload in attemptPayloads(attempt.attempt_no)" :key="payloadKey(currentTurn.trace.trace_id, payload)" :payload="payload" :content="payloadContent(currentTurn.trace.trace_id, payload)" @load="loadPayload(currentTurn.trace.trace_id, payload)" @copy="copyPayload(currentTurn.trace.trace_id, payload)" />
           </article>
+          <TraceRawPayload v-for="payload in rootClientResultPayloads" :key="payloadKey(currentTurn.trace.trace_id, payload)" :payload="payload" :content="payloadContent(currentTurn.trace.trace_id, payload)" @load="loadPayload(currentTurn.trace.trace_id, payload)" @copy="copyPayload(currentTurn.trace.trace_id, payload)" />
         </template>
       </section>
     </div>
@@ -81,8 +82,9 @@ const payloadKey = (traceID: string, payload: ModelTracePayload) => `${traceID}:
 /** Return the selected root call from the replay result for its raw chain. */
 const currentTurn = computed<ModelTraceDetail | null>(() => conversation.value?.turns.find((turn) => turn.trace.trace_id === conversation.value?.current_trace_id) || null)
 
-/** Keep client-visible payloads before the per-attempt upstream sections. */
-const rootClientPayloads = computed(() => currentTurn.value?.payloads.filter((payload) => payload.attempt_no === 0) || [])
+/** Keep the client request before, and the visible result after, upstream attempts. */
+const rootClientRequestPayloads = computed(() => currentTurn.value?.payloads.filter((payload) => payload.attempt_no === 0 && payload.kind === 'client_request') || [])
+const rootClientResultPayloads = computed(() => currentTurn.value?.payloads.filter((payload) => payload.attempt_no === 0 && payload.kind !== 'client_request') || [])
 
 /** Locate one payload metadata record by exact kind within a replay turn. */
 const findPayload = (turn: ModelTraceDetail, kind: ModelTracePayloadKind) => turn.payloads.find((payload) => payload.kind === kind && payload.attempt_no === 0)
@@ -133,13 +135,13 @@ const loadConversation = async () => {
   }
 }
 
-/** Copy selected body text first, then best-effort log its identifiers only. */
+/** Record a content-free copy event before placing the selected body on the clipboard. */
 const copyPayload = async (traceID: string, payload: ModelTracePayload) => {
   const content = payloadContent(traceID, payload)
   if (!content || !navigator.clipboard) return
   try {
+    await modelTraceAPI.recordAccessEvent(traceID, payload.kind, payload.attempt_no)
     await navigator.clipboard.writeText(content)
-    void modelTraceAPI.recordAccessEvent(traceID, payload.kind, payload.attempt_no)
   } catch {
     errorMessage.value = t('admin.modelTrace.errors.copy')
   }
@@ -172,7 +174,10 @@ const TraceBubble = defineComponent({
       h('div', { class: componentProps.align === 'right' ? 'rounded-2xl rounded-tr-sm bg-teal-600 px-4 py-3 text-sm text-white shadow-sm' : 'rounded-2xl rounded-tl-sm bg-slate-100 px-4 py-3 text-sm text-slate-800 shadow-sm dark:bg-dark-700 dark:text-slate-100' }, [
         componentProps.payload
           ? h('div', { class: 'space-y-2' }, [
-            h('pre', { class: 'whitespace-pre-wrap break-words font-sans text-sm leading-6' }, payloadContent(componentProps.traceId, componentProps.payload) || t('admin.modelTrace.detail.loadingBody')),
+            h('pre', { class: 'whitespace-pre-wrap break-words font-sans text-sm leading-6' }, payloadContent(componentProps.traceId, componentProps.payload)
+              || (componentProps.payload.content_status === 'available'
+                ? t('admin.modelTrace.detail.loadingBody')
+                : t('admin.modelTrace.detail.contentUnavailable', { status: componentProps.payload.content_status }))),
             payloadContent(componentProps.traceId, componentProps.payload) ? h('button', { type: 'button', class: 'text-xs underline underline-offset-2 opacity-80 hover:opacity-100', onClick: () => emit('copy', componentProps.payload) }, t('common.copy')) : null,
           ])
           : h('p', { class: 'italic opacity-70' }, t('admin.modelTrace.detail.contentUnavailable', { status: 'not_captured' })),

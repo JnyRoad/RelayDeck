@@ -14,13 +14,58 @@ import (
 // install an observer on a gateway request context.
 type upstreamAttemptObserverContextKey struct{}
 
-const upstreamAttemptPersistenceWait = 5 * time.Second
+const (
+	upstreamAttemptPersistenceWait      = 5 * time.Second
+	upstreamAttemptPersistenceQueueSize = 256
+)
+
+// upstreamAttemptPersistenceScheduler accepts best-effort writes without
+// making the HTTP dispatch wait for trace storage availability.
+type upstreamAttemptPersistenceScheduler interface {
+	Enqueue(func()) bool
+}
+
+// asyncUpstreamAttemptPersistenceScheduler runs bounded queued writes in one
+// order-preserving worker. Queue saturation intentionally drops trace work.
+type asyncUpstreamAttemptPersistenceScheduler struct {
+	tasks chan func()
+}
+
+// newAsyncUpstreamAttemptPersistenceScheduler starts the one worker used for
+// best-effort attempt persistence. It owns no request resources after a task
+// completes and never feeds errors back into gateway request handling.
+func newAsyncUpstreamAttemptPersistenceScheduler(queueSize int) *asyncUpstreamAttemptPersistenceScheduler {
+	scheduler := &asyncUpstreamAttemptPersistenceScheduler{tasks: make(chan func(), queueSize)}
+	go func() {
+		for task := range scheduler.tasks {
+			task()
+		}
+	}()
+	return scheduler
+}
+
+// Enqueue accepts only immediately available capacity, preserving upstream
+// latency when the tracing database is slow, unavailable, or overloaded.
+func (s *asyncUpstreamAttemptPersistenceScheduler) Enqueue(task func()) bool {
+	if s == nil || task == nil {
+		return false
+	}
+	select {
+	case s.tasks <- task:
+		return true
+	default:
+		return false
+	}
+}
+
+var defaultUpstreamAttemptPersistenceScheduler = newAsyncUpstreamAttemptPersistenceScheduler(upstreamAttemptPersistenceQueueSize)
 
 // UpstreamAttemptObserver allocates positive, per-root attempt numbers at the
 // shared HTTP boundary. Its persistence calls are best-effort by design.
 type UpstreamAttemptObserver struct {
-	recorder UpstreamAttemptRecorder
-	handle   TraceHandle
+	recorder  UpstreamAttemptRecorder
+	handle    TraceHandle
+	scheduler upstreamAttemptPersistenceScheduler
 
 	mu     sync.Mutex
 	nextNo int
@@ -49,7 +94,11 @@ func NewUpstreamAttemptObserver(recorder Recorder, handle TraceHandle) *Upstream
 	if !ok || attemptRecorder == nil {
 		return nil
 	}
-	return &UpstreamAttemptObserver{recorder: attemptRecorder, handle: handle}
+	return &UpstreamAttemptObserver{
+		recorder:  attemptRecorder,
+		handle:    handle,
+		scheduler: defaultUpstreamAttemptPersistenceScheduler,
+	}
 }
 
 // WithUpstreamAttemptObserver adds a root-bound observer to the request
@@ -75,8 +124,8 @@ func UpstreamAttemptObserverFromContext(ctx context.Context) *UpstreamAttemptObs
 	return observer
 }
 
-// Begin allocates and persists one actual dispatch occurrence before its HTTP
-// request is sent. Storage failure returns nil and never changes transport flow.
+// Begin allocates one actual dispatch occurrence before its HTTP request is
+// sent. Metadata persistence is queued and never delays the transport flow.
 func (o *UpstreamAttemptObserver) Begin(ctx context.Context, input UpstreamAttemptInput) *UpstreamAttempt {
 	if o == nil || o.recorder == nil || !o.handle.Enabled {
 		return nil
@@ -87,9 +136,9 @@ func (o *UpstreamAttemptObserver) Begin(ctx context.Context, input UpstreamAttem
 	input.AttemptNo = o.nextNo
 	o.mu.Unlock()
 	input.StartedAt = now
-	if err := withUpstreamAttemptPersistence(ctx, func(persistCtx context.Context) error {
+	if !o.enqueue(ctx, func(persistCtx context.Context) error {
 		return o.recorder.StartUpstreamAttempt(persistCtx, o.handle, input)
-	}); err != nil {
+	}) {
 		return nil
 	}
 	return &UpstreamAttempt{observer: o, input: input, started: now}
@@ -122,7 +171,7 @@ func (a *UpstreamAttempt) RecordRequest(ctx context.Context, contentType string)
 		if capture == nil {
 			capture = newUpstreamAttemptBodyCapture(nil)
 		}
-		_ = withUpstreamAttemptPersistence(ctx, func(persistCtx context.Context) error {
+		_ = a.observer.enqueue(ctx, func(persistCtx context.Context) error {
 			return a.observer.recorder.RecordPayload(persistCtx, a.observer.handle,
 				capture.Payload(PayloadKindUpstreamRequest, a.input.AttemptNo, contentType))
 		})
@@ -158,7 +207,7 @@ func (a *UpstreamAttempt) RecordTransportError(ctx context.Context) {
 	a.RecordRequest(ctx, "")
 	a.finishOnce.Do(func() {
 		body := []byte(`{"error_code":"upstream_transport_error"}`)
-		_ = withUpstreamAttemptPersistence(ctx, func(persistCtx context.Context) error {
+		_ = a.observer.enqueue(ctx, func(persistCtx context.Context) error {
 			return a.observer.recorder.RecordPayload(persistCtx, a.observer.handle, PayloadInput{
 				Kind:          PayloadKindUpstreamError,
 				AttemptNo:     a.input.AttemptNo,
@@ -168,7 +217,7 @@ func (a *UpstreamAttempt) RecordTransportError(ctx context.Context) {
 				SHA256:        hashPayload(body),
 			})
 		})
-		_ = withUpstreamAttemptPersistence(ctx, func(persistCtx context.Context) error {
+		_ = a.observer.enqueue(ctx, func(persistCtx context.Context) error {
 			return a.observer.recorder.FinishUpstreamAttempt(persistCtx, a.observer.handle, UpstreamAttemptFinishInput{
 				AttemptNo:  a.input.AttemptNo,
 				Outcome:    OutcomeFailed,
@@ -204,11 +253,11 @@ func (a *UpstreamAttempt) finishResponse(ctx context.Context, capture *upstreamA
 			errorStage = "response_read"
 			errorCode = "upstream_response_read_error"
 		}
-		_ = withUpstreamAttemptPersistence(ctx, func(persistCtx context.Context) error {
+		_ = a.observer.enqueue(ctx, func(persistCtx context.Context) error {
 			return a.observer.recorder.RecordPayload(persistCtx, a.observer.handle,
 				capture.Payload(kind, a.input.AttemptNo, contentType))
 		})
-		_ = withUpstreamAttemptPersistence(ctx, func(persistCtx context.Context) error {
+		_ = a.observer.enqueue(ctx, func(persistCtx context.Context) error {
 			return a.observer.recorder.FinishUpstreamAttempt(persistCtx, a.observer.handle, UpstreamAttemptFinishInput{
 				AttemptNo:  a.input.AttemptNo,
 				Outcome:    outcome,
@@ -218,6 +267,18 @@ func (a *UpstreamAttempt) finishResponse(ctx context.Context, capture *upstreamA
 				DurationMS: attemptDurationMS(a.started),
 			})
 		})
+	})
+}
+
+// enqueue schedules one detached persistence operation only when the bounded
+// worker has capacity. Returning false intentionally disables this occurrence
+// rather than making an upstream request wait for tracing storage.
+func (o *UpstreamAttemptObserver) enqueue(ctx context.Context, operation func(context.Context) error) bool {
+	if o == nil || o.scheduler == nil || operation == nil {
+		return false
+	}
+	return o.scheduler.Enqueue(func() {
+		_ = withUpstreamAttemptPersistence(ctx, operation)
 	})
 }
 
