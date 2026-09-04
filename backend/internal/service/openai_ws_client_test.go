@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,8 @@ import (
 	coderws "github.com/coder/websocket"
 	"github.com/stretchr/testify/require"
 )
+
+const openAIWSClientCompressedPayload = "relaydeck-codex-deflate-payload-"
 
 type openAIWSClientMaxWindowResponseWriter struct {
 	http.ResponseWriter
@@ -33,16 +36,31 @@ func (w *openAIWSClientMaxWindowResponseWriter) WriteHeader(statusCode int) {
 	w.ResponseWriter.WriteHeader(statusCode)
 }
 
-// newOpenAIWSClientCompressionTestServer 创建会选定压缩扩展并发送压缩文本帧的本地上游。
-func newOpenAIWSClientCompressionTestServer(t *testing.T) (*httptest.Server, <-chan string, <-chan error) {
+// newOpenAIWSClientCompressionTestServer 创建会选定压缩扩展、发送压缩文本帧并读取客户端消息的本地上游。
+func newOpenAIWSClientCompressionTestServer(
+	t *testing.T,
+	clientWindowBits int,
+) (*httptest.Server, <-chan string, <-chan []byte, <-chan error) {
+	return newOpenAIWSClientCompressionTestServerWithExtension(
+		t,
+		fmt.Sprintf("permessage-deflate; client_max_window_bits=%d", clientWindowBits),
+	)
+}
+
+// newOpenAIWSClientCompressionTestServerWithExtension 创建使用指定压缩响应扩展的本地上游。
+func newOpenAIWSClientCompressionTestServerWithExtension(
+	t *testing.T,
+	extension string,
+) (*httptest.Server, <-chan string, <-chan []byte, <-chan error) {
 	t.Helper()
 	handshakeExtensions := make(chan string, 1)
+	clientMessages := make(chan []byte, 1)
 	serverErr := make(chan error, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handshakeExtensions <- r.Header.Get("Sec-WebSocket-Extensions")
 		conn, err := coderws.Accept(&openAIWSClientMaxWindowResponseWriter{
 			ResponseWriter: w,
-			extension:      "permessage-deflate; client_max_window_bits=15",
+			extension:      extension,
 		}, r, &coderws.AcceptOptions{
 			CompressionMode: coderws.CompressionContextTakeover,
 		})
@@ -56,36 +74,63 @@ func newOpenAIWSClientCompressionTestServer(t *testing.T) (*httptest.Server, <-c
 		defer cancel()
 		if err := conn.Write(writeCtx, coderws.MessageText, []byte("compressed WebSocket message")); err != nil {
 			serverErr <- err
+			return
 		}
+
+		readCtx, cancel := context.WithTimeout(r.Context(), time.Second)
+		defer cancel()
+		_, payload, err := conn.Read(readCtx)
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		clientMessages <- payload
 	}))
-	return server, handshakeExtensions, serverErr
+	return server, handshakeExtensions, clientMessages, serverErr
 }
 
-// requireOpenAIWSClientCompressionHandshake 验证 Codex offer、协商后的压缩读取及服务端错误。
+// requireOpenAIWSClientCompressionHandshake 验证 Codex offer、双向压缩消息及服务端错误。
 func requireOpenAIWSClientCompressionHandshake(
 	t *testing.T,
 	conn openAIWSClientConn,
 	handshakeExtensions <-chan string,
+	clientMessages <-chan []byte,
 	serverErr <-chan error,
 ) {
 	t.Helper()
 	payload, err := conn.ReadMessage(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, []byte("compressed WebSocket message"), payload)
+	require.NoError(t, conn.WriteJSON(context.Background(), map[string]string{
+		"kind":    "relaydeck-test",
+		"payload": strings.Repeat(openAIWSClientCompressedPayload, 32),
+	}))
 
 	select {
-	case err := <-serverErr:
-		require.NoError(t, err)
 	case got := <-handshakeExtensions:
 		require.Equal(t, "permessage-deflate; client_max_window_bits", got)
+	case err := <-serverErr:
+		require.NoError(t, err)
 	case <-time.After(time.Second):
 		t.Fatal("WebSocket server did not receive the handshake")
+	}
+
+	select {
+	case payload := <-clientMessages:
+		var clientMessage map[string]string
+		require.NoError(t, json.Unmarshal(payload, &clientMessage))
+		require.Equal(t, "relaydeck-test", clientMessage["kind"])
+		require.Equal(t, strings.Repeat(openAIWSClientCompressedPayload, 32), clientMessage["payload"])
+	case err := <-serverErr:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("WebSocket server did not receive the client message")
 	}
 }
 
 // TestCoderOpenAIWSClientDialer_OffersCodexCompatibleDeflateExtension 防止底层库覆盖 Codex 的压缩协商头。
 func TestCoderOpenAIWSClientDialer_OffersCodexCompatibleDeflateExtension(t *testing.T) {
-	server, handshakeExtensions, serverErr := newOpenAIWSClientCompressionTestServer(t)
+	server, handshakeExtensions, clientMessages, serverErr := newOpenAIWSClientCompressionTestServer(t, 15)
 	defer server.Close()
 
 	dialer := newDefaultOpenAIWSClientDialer()
@@ -97,12 +142,12 @@ func TestCoderOpenAIWSClientDialer_OffersCodexCompatibleDeflateExtension(t *test
 	)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, conn.Close()) }()
-	requireOpenAIWSClientCompressionHandshake(t, conn, handshakeExtensions, serverErr)
+	requireOpenAIWSClientCompressionHandshake(t, conn, handshakeExtensions, clientMessages, serverErr)
 }
 
 // TestCoderOpenAIWSClientDialer_OffersCodexCompatibleDeflateExtensionThroughProxy 验证代理路径也使用同一 offer。
 func TestCoderOpenAIWSClientDialer_OffersCodexCompatibleDeflateExtensionThroughProxy(t *testing.T) {
-	upstream, handshakeExtensions, serverErr := newOpenAIWSClientCompressionTestServer(t)
+	upstream, handshakeExtensions, clientMessages, serverErr := newOpenAIWSClientCompressionTestServer(t, 15)
 	defer upstream.Close()
 	upstreamURL, err := url.Parse(upstream.URL)
 	require.NoError(t, err)
@@ -118,7 +163,102 @@ func TestCoderOpenAIWSClientDialer_OffersCodexCompatibleDeflateExtensionThroughP
 	)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, conn.Close()) }()
-	requireOpenAIWSClientCompressionHandshake(t, conn, handshakeExtensions, serverErr)
+	requireOpenAIWSClientCompressionHandshake(t, conn, handshakeExtensions, clientMessages, serverErr)
+}
+
+// TestCoderOpenAIWSClientDialer_UsesCodexNegotiatedClientWindows 覆盖官方 Codex 支持的全部客户端窗口值与代理路径。
+func TestCoderOpenAIWSClientDialer_UsesCodexNegotiatedClientWindows(t *testing.T) {
+	for _, throughProxy := range []bool{false, true} {
+		for clientWindowBits := 9; clientWindowBits <= 15; clientWindowBits++ {
+			t.Run(fmt.Sprintf("proxy=%t/window=%d", throughProxy, clientWindowBits), func(t *testing.T) {
+				upstream, handshakeExtensions, clientMessages, serverErr := newOpenAIWSClientCompressionTestServer(t, clientWindowBits)
+				defer upstream.Close()
+
+				proxyURL := ""
+				if throughProxy {
+					upstreamURL, err := url.Parse(upstream.URL)
+					require.NoError(t, err)
+					proxy := httptest.NewServer(httputil.NewSingleHostReverseProxy(upstreamURL))
+					defer proxy.Close()
+					proxyURL = proxy.URL
+				}
+
+				dialer := newDefaultOpenAIWSClientDialer()
+				conn, _, _, err := dialer.Dial(
+					context.Background(),
+					"ws"+strings.TrimPrefix(upstream.URL, "http"),
+					http.Header{"User-Agent": []string{"relaydeck-test"}},
+					proxyURL,
+				)
+				require.NoError(t, err)
+				defer func() { require.NoError(t, conn.Close()) }()
+				requireOpenAIWSClientCompressionHandshake(t, conn, handshakeExtensions, clientMessages, serverErr)
+			})
+		}
+	}
+}
+
+// TestCoderOpenAIWSClientDialer_RejectsUnsupportedCodexClientWindow 拒绝官方 Codex 不支持的 8 位客户端窗口。
+func TestCoderOpenAIWSClientDialer_RejectsUnsupportedCodexClientWindow(t *testing.T) {
+	for _, responseExtension := range []string{
+		"permessage-deflate; client_max_window_bits=8",
+		"permessage-deflate; client_max_window_bits=invalid",
+	} {
+		t.Run(responseExtension, func(t *testing.T) {
+			server, _, _, _ := newOpenAIWSClientCompressionTestServerWithExtension(t, responseExtension)
+			defer server.Close()
+
+			dialer := newDefaultOpenAIWSClientDialer()
+			conn, _, _, err := dialer.Dial(
+				context.Background(),
+				"ws"+strings.TrimPrefix(server.URL, "http"),
+				http.Header{"User-Agent": []string{"relaydeck-test"}},
+				"",
+			)
+			require.Nil(t, conn)
+			require.Error(t, err)
+			require.ErrorContains(t, err, responseExtension[len("permessage-deflate; "):])
+		})
+	}
+}
+
+// TestCoderOpenAIWSClientDialer_UsesCodexDefaultWindowWhenOmitted 验证省略选择时沿用 Codex 默认的 15 位窗口。
+func TestCoderOpenAIWSClientDialer_UsesCodexDefaultWindowWhenOmitted(t *testing.T) {
+	server, handshakeExtensions, clientMessages, serverErr := newOpenAIWSClientCompressionTestServerWithExtension(t, "permessage-deflate")
+	defer server.Close()
+
+	dialer := newDefaultOpenAIWSClientDialer()
+	conn, _, _, err := dialer.Dial(
+		context.Background(),
+		"ws"+strings.TrimPrefix(server.URL, "http"),
+		http.Header{"User-Agent": []string{"relaydeck-test"}},
+		"",
+	)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, conn.Close()) }()
+	requireOpenAIWSClientCompressionHandshake(t, conn, handshakeExtensions, clientMessages, serverErr)
+}
+
+// TestCoderWebSocketDial_DefaultDeflateOfferIsUnchanged 验证未开启 OAuth 专用选项的调用方仍使用原始 offer。
+func TestCoderWebSocketDial_DefaultDeflateOfferIsUnchanged(t *testing.T) {
+	handshakeExtensions := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handshakeExtensions <- r.Header.Get("Sec-WebSocket-Extensions")
+		conn, err := coderws.Accept(w, r, &coderws.AcceptOptions{
+			CompressionMode: coderws.CompressionContextTakeover,
+		})
+		if err == nil {
+			_ = conn.CloseNow()
+		}
+	}))
+	defer server.Close()
+
+	conn, _, err := coderws.Dial(context.Background(), "ws"+strings.TrimPrefix(server.URL, "http"), &coderws.DialOptions{
+		CompressionMode: coderws.CompressionContextTakeover,
+	})
+	require.NoError(t, err)
+	require.NoError(t, conn.CloseNow())
+	require.Equal(t, "permessage-deflate", <-handshakeExtensions)
 }
 
 func TestCoderOpenAIWSClientDialer_ProxyHTTPClientReuse(t *testing.T) {

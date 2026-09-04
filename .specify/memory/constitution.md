@@ -1,8 +1,8 @@
 <!--
 Sync Impact Report
-- Version change: template → 1.0.0
-- Modified principles: none (initial adoption)
-- Added sections: Product Identity, Delivery Workflow
+- Version change: 1.0.0 → 1.1.0
+- Modified principles: none
+- Added principles: VI. Provider Transport Fidelity
 - Removed sections: none
 - Follow-up TODOs: none
 -->
@@ -46,6 +46,15 @@ user-designated RelayDeck destinations. Creating or reconfiguring a remote does
 not authorize pushing, publishing images, deploying, or deleting the old
 resources.
 
+### VI. Provider Transport Fidelity
+
+When RelayDeck emulates an approved reference client for an OAuth upstream
+WebSocket, the negotiated transport behavior MUST be correct end-to-end: headers,
+extension parameters, and the actual frame codec MUST agree. Header rewriting
+alone is prohibited when it would conceal an unsupported codec parameter. Such
+behavior MUST be opt-in for its named upstream path and leave other WebSocket
+callers at their existing defaults.
+
 ## Product Identity
 
 The canonical source repository is `github.com/JnyRoad/RelayDeck`; the legacy
@@ -75,4 +84,4 @@ principles, and PATCH for clarifications. Every implementation review MUST
 verify the applicable principles and retain fresh command evidence for claimed
 validation.
 
-**Version**: 1.0.0 | **Ratified**: 2026-09-01 | **Last Amended**: 2026-09-01
+**Version**: 1.1.0 | **Ratified**: 2026-09-01 | **Last Amended**: 2026-09-04
