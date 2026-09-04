@@ -374,6 +374,7 @@ func (r *PostgresRepository) GetConversationPage(ctx context.Context, traceID st
 	if loadErr != nil {
 		return TraceConversation{}, loadErr
 	}
+	turns = retainLoadedCurrentConversationTurn(turns, positions, current)
 	conversation.Turns = turns
 	conversation.OlderCursor, conversation.NewerCursor = conversationPageCursors(turns, positions, hasOlder, hasNewer)
 	return conversation, nil
@@ -670,6 +671,40 @@ func orderedConversationTurns(traceIDs []string, byTraceID map[string]*TraceDeta
 		}
 	}
 	return turns
+}
+
+// retainLoadedCurrentConversationTurn preserves a root detail already read by
+// GetTrace when it belongs to this page but is deleted before batch hydration.
+// Directional pages that do not select the root remain unchanged.
+func retainLoadedCurrentConversationTurn(turns []TraceDetail, positions []conversationCursor, current TraceDetail) []TraceDetail {
+	currentPosition := conversationCursor{CreatedAt: current.Trace.CreatedAt, TraceID: current.Trace.TraceID}
+	selected := false
+	for _, position := range positions {
+		if position == currentPosition {
+			selected = true
+			break
+		}
+	}
+	if !selected {
+		return turns
+	}
+	for _, turn := range turns {
+		if turn.Trace.TraceID == current.Trace.TraceID {
+			return turns
+		}
+	}
+	insertAt := len(turns)
+	for index, turn := range turns {
+		if turn.Trace.CreatedAt.After(current.Trace.CreatedAt) || (turn.Trace.CreatedAt.Equal(current.Trace.CreatedAt) && turn.Trace.TraceID > current.Trace.TraceID) {
+			insertAt = index
+			break
+		}
+	}
+	retained := make([]TraceDetail, 0, len(turns)+1)
+	retained = append(retained, turns[:insertAt]...)
+	retained = append(retained, current)
+	retained = append(retained, turns[insertAt:]...)
+	return retained
 }
 
 // modelTraceWhere 将允许的筛选字段转换为参数化 SQL，调用方永不拼接客户端输入。

@@ -138,6 +138,27 @@ func TestConversationHydrationSkipsDeletedTraceIDs(t *testing.T) {
 	}
 }
 
+// TestConversationHydrationRetainsLoadedCurrentTurn keeps the selected root
+// visible when it was deleted after GetTrace but before page hydration.
+func TestConversationHydrationRetainsLoadedCurrentTurn(t *testing.T) {
+	current := TraceDetail{Trace: TraceSummary{
+		TraceID:   "trace-current",
+		CreatedAt: time.Date(2026, time.September, 3, 12, 1, 0, 0, time.UTC),
+	}}
+	positions := []conversationCursor{
+		{CreatedAt: time.Date(2026, time.September, 3, 12, 0, 0, 0, time.UTC), TraceID: "trace-first"},
+		{CreatedAt: current.Trace.CreatedAt, TraceID: current.Trace.TraceID},
+		{CreatedAt: time.Date(2026, time.September, 3, 12, 2, 0, 0, time.UTC), TraceID: "trace-last"},
+	}
+	turns := retainLoadedCurrentConversationTurn([]TraceDetail{
+		{Trace: TraceSummary{TraceID: "trace-first", CreatedAt: positions[0].CreatedAt}},
+		{Trace: TraceSummary{TraceID: "trace-last", CreatedAt: positions[2].CreatedAt}},
+	}, positions, current)
+	if len(turns) != 3 || turns[1].Trace.TraceID != current.Trace.TraceID {
+		t.Fatalf("hydrated turns=%#v, want retained current turn in chronological position", turns)
+	}
+}
+
 // TestConversationPageCursorsFallBackToPositions preserves a usable paging
 // anchor when every selected trace is deleted before metadata hydration.
 func TestConversationPageCursorsFallBackToPositions(t *testing.T) {
