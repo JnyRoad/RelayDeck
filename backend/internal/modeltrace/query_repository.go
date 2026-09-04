@@ -444,7 +444,7 @@ func conversationPageCursors(turns []TraceDetail, positions []conversationCursor
 	if len(turns) == 0 && len(positions) == 0 {
 		return "", ""
 	}
-	olderAnchor, newerAnchor := conversationCursor{}, conversationCursor{}
+	var olderAnchor, newerAnchor conversationCursor
 	if len(turns) > 0 {
 		olderAnchor = conversationCursor{CreatedAt: turns[0].Trace.CreatedAt, TraceID: turns[0].Trace.TraceID}
 		newerAnchor = conversationCursor{CreatedAt: turns[len(turns)-1].Trace.CreatedAt, TraceID: turns[len(turns)-1].Trace.TraceID}
