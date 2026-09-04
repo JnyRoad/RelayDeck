@@ -26,6 +26,8 @@ const (
 	openAIWSProxyClientCacheIdleTTL           = 15 * time.Minute
 )
 
+const openAIWSCodexDeflateExtension = "permessage-deflate; client_max_window_bits"
+
 type OpenAIWSTransportMetricsSnapshot struct {
 	ProxyClientCacheHits   int64   `json:"proxy_client_cache_hits"`
 	ProxyClientCacheMisses int64   `json:"proxy_client_cache_misses"`
@@ -111,13 +113,17 @@ func (d *coderOpenAIWSClientDialer) Dial(
 		HTTPHeader:      cloneHeader(headers),
 		CompressionMode: coderws.CompressionContextTakeover,
 	}
+	baseHTTPClient := http.DefaultClient
 	if proxy := strings.TrimSpace(proxyURL); proxy != "" {
 		proxyClient, err := d.proxyHTTPClient(proxy)
 		if err != nil {
 			return nil, 0, nil, err
 		}
-		opts.HTTPClient = proxyClient
+		baseHTTPClient = proxyClient
 	}
+	// coder/websocket 会以自身默认的 permessage-deflate offer 覆盖 HTTPHeader。
+	// 在其实际发送请求的 Transport 边界重写，才能与 Codex CLI 的握手协商保持一致。
+	opts.HTTPClient = newOpenAIWSCodexHandshakeHTTPClient(baseHTTPClient)
 
 	conn, resp, err := coderws.Dial(ctx, targetURL, opts)
 	if err != nil {
@@ -142,6 +148,40 @@ func (d *coderOpenAIWSClientDialer) Dial(
 		respHeaders = cloneHeader(resp.Header)
 	}
 	return &coderOpenAIWSClientConn{conn: conn}, 0, respHeaders, nil
+}
+
+// newOpenAIWSCodexHandshakeHTTPClient 返回仅用于 OpenAI WS 建连的客户端副本。
+// 它保留原客户端的代理、超时和重定向语义，只在真正出站时补齐 Codex 的压缩协商 offer。
+func newOpenAIWSCodexHandshakeHTTPClient(base *http.Client) *http.Client {
+	if base == nil {
+		base = http.DefaultClient
+	}
+	client := *base
+	transport := base.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	client.Transport = openAIWSCodexHandshakeTransport{base: transport}
+	return &client
+}
+
+type openAIWSCodexHandshakeTransport struct {
+	base http.RoundTripper
+}
+
+// RoundTrip 在 WebSocket 库生成握手头之后写入 Codex CLI 的 deflate offer，且不修改调用方请求对象。
+func (t openAIWSCodexHandshakeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req == nil {
+		return nil, errors.New("openai websocket handshake request is nil")
+	}
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	cloned := req.Clone(req.Context())
+	cloned.Header = cloneHeader(req.Header)
+	cloned.Header.Set("Sec-WebSocket-Extensions", openAIWSCodexDeflateExtension)
+	return base.RoundTrip(cloned)
 }
 
 func (d *coderOpenAIWSClientDialer) proxyHTTPClient(proxy string) (*http.Client, error) {

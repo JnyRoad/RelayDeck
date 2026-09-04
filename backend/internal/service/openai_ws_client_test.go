@@ -1,13 +1,54 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	coderws "github.com/coder/websocket"
 	"github.com/stretchr/testify/require"
 )
+
+// TestCoderOpenAIWSClientDialer_OffersCodexCompatibleDeflateExtension 防止底层库覆盖 Codex 的压缩协商头。
+func TestCoderOpenAIWSClientDialer_OffersCodexCompatibleDeflateExtension(t *testing.T) {
+	handshakeExtensions := make(chan string, 1)
+	serverErr := make(chan error, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handshakeExtensions <- r.Header.Get("Sec-WebSocket-Extensions")
+		conn, err := coderws.Accept(w, r, &coderws.AcceptOptions{
+			CompressionMode: coderws.CompressionContextTakeover,
+		})
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		defer conn.CloseNow()
+	}))
+	defer server.Close()
+
+	dialer := newDefaultOpenAIWSClientDialer()
+	conn, _, _, err := dialer.Dial(
+		context.Background(),
+		"ws"+strings.TrimPrefix(server.URL, "http"),
+		http.Header{"User-Agent": []string{"relaydeck-test"}},
+		"",
+	)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, conn.Close()) }()
+
+	select {
+	case err := <-serverErr:
+		require.NoError(t, err)
+	case got := <-handshakeExtensions:
+		require.Equal(t, "permessage-deflate; client_max_window_bits", got)
+	case <-time.After(time.Second):
+		t.Fatal("WebSocket server did not receive the handshake")
+	}
+}
 
 func TestCoderOpenAIWSClientDialer_ProxyHTTPClientReuse(t *testing.T) {
 	dialer := newDefaultOpenAIWSClientDialer()
