@@ -1,6 +1,6 @@
 # Research: Codex Deflate Window Support
 
-## Decision: Mirror the official Codex supported range, not the RFC maximum
+## Decision: Mirror the official Codex-supported range, not the RFC maximum
 
 **Decision**: Accept upstream-selected `client_max_window_bits` values 9 through
 15 and reject 8.

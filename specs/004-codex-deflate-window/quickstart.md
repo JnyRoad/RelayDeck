@@ -34,7 +34,7 @@ before application data; current pool tests remain green.
 From the RelayDeck repository root, run:
 
 ```bash
-go test ./backend/...
+cd backend && go test ./...
 ```
 
 Expected behavior: all backend packages compile and tests pass. No live OAuth

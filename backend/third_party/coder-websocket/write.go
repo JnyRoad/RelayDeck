@@ -182,6 +182,8 @@ func (mw *msgWriter) Write(p []byte) (_ int, err error) {
 		if mw.opcode != opContinuation && len(p) >= mw.c.flateThreshold {
 			err = mw.ensureFlate()
 			if err != nil {
+				mw.closed = true
+				mw.mu.unlock()
 				return 0, err
 			}
 		}

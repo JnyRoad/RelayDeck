@@ -20,9 +20,12 @@ func goroutineStacks() []byte {
 
 func TestMain(m *testing.M) {
 	code := m.Run()
-	if runtime.GOOS != "js" && runtime.NumGoroutine() != 1 ||
-		runtime.GOOS == "js" && runtime.NumGoroutine() != 2 {
-		fmt.Fprintf(os.Stderr, "goroutine leak detected, expected 1 but got %d goroutines\n", runtime.NumGoroutine())
+	expectedGoroutines := 1
+	if runtime.GOOS == "js" {
+		expectedGoroutines = 2
+	}
+	if runtime.NumGoroutine() != expectedGoroutines {
+		fmt.Fprintf(os.Stderr, "goroutine leak detected, expected %d but got %d goroutines\n", expectedGoroutines, runtime.NumGoroutine())
 		fmt.Fprintf(os.Stderr, "%s\n", goroutineStacks())
 		os.Exit(1)
 	}

@@ -5,11 +5,14 @@ package websocket
 import (
 	"bytes"
 	"compress/flate"
+	"context"
+	"errors"
 	"io"
 	"reflect"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/coder/websocket/internal/test/assert"
 	"github.com/coder/websocket/internal/test/xrand"
@@ -51,6 +54,28 @@ func TestMsgWriterUsesCodexClientWindow(t *testing.T) {
 			assert.Equal(t, "writer package", "github.com/klauspost/compress/flate", typeOfWriter.Elem().PkgPath())
 			mw.putFlateWriter()
 		})
+	}
+}
+
+// TestConnWriteReleasesWriterLockAfterFlateInitializationFailure verifies a failed encoder setup does not block later writes.
+func TestConnWriteReleasesWriterLockAfterFlateInitializationFailure(t *testing.T) {
+	c := &Conn{
+		client:         true,
+		closed:         make(chan struct{}),
+		copts:          &compressionOptions{clientMaxWindowBits: 8},
+		flateThreshold: 1,
+	}
+	c.msgWriter = newMsgWriter(c)
+
+	_, err := c.write(context.Background(), MessageText, []byte("x"))
+	assert.Error(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, err = c.write(ctx, MessageText, []byte("x"))
+	assert.Error(t, err)
+	if errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("second write waited for the previous writer lock: %v", err)
 	}
 }
 
