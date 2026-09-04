@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { post } = vi.hoisted(() => ({
   post: vi.fn(),
@@ -13,6 +13,7 @@ vi.mock('@/api/client', () => ({
 import {
   batchUpdateLimits,
   bindUserAuthIdentity,
+  createUserApiKey,
   type AdminBindAuthIdentityRequest,
   type AdminBoundAuthIdentity,
   type BatchUpdateUserLimitsRequest,
@@ -146,5 +147,50 @@ describe('admin users api auth identity binding', () => {
     expect(result).toEqual({ affected: 2 })
     expect(batchRequestContractExact).toBe(true)
     expect(batchResponseContractExact).toBe(true)
+  })
+})
+
+describe('admin user API Key creation', () => {
+  beforeEach(() => {
+    post.mockReset()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('reuses the idempotency key after an ambiguous failure for the same target submission', async () => {
+    vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValue('11111111-1111-4111-8111-111111111111')
+    const payload = { name: 'target-key', quota: 10 }
+
+    post.mockRejectedValueOnce(new Error('network timeout'))
+    await expect(createUserApiKey(42, payload)).rejects.toThrow('network timeout')
+
+    post.mockResolvedValueOnce({ data: { id: 31 } })
+    await expect(createUserApiKey(42, payload)).resolves.toEqual({ id: 31 })
+
+    expect(post).toHaveBeenCalledTimes(2)
+    expect(post.mock.calls[0][2]).toEqual({
+      headers: { 'Idempotency-Key': 'admin-user-api-key-create-42-11111111-1111-4111-8111-111111111111' },
+    })
+    expect(post.mock.calls[1][2]).toEqual(post.mock.calls[0][2])
+  })
+
+  it('clears a completed submission key before the next create operation', async () => {
+    vi.spyOn(globalThis.crypto, 'randomUUID')
+      .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
+      .mockReturnValueOnce('22222222-2222-4222-8222-222222222222')
+    const payload = { name: 'target-key' }
+    post.mockResolvedValue({ data: { id: 31 } })
+
+    await createUserApiKey(42, payload)
+    await createUserApiKey(42, payload)
+
+    expect(post.mock.calls[0][2]).toEqual({
+      headers: { 'Idempotency-Key': 'admin-user-api-key-create-42-11111111-1111-4111-8111-111111111111' },
+    })
+    expect(post.mock.calls[1][2]).toEqual({
+      headers: { 'Idempotency-Key': 'admin-user-api-key-create-42-22222222-2222-4222-8222-222222222222' },
+    })
   })
 })

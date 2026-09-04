@@ -94,6 +94,23 @@ type IdempotencyExecuteResult struct {
 	Replayed bool
 }
 
+type idempotencyRecordContextKey struct{}
+
+// IdempotencyRecordIDFromContext returns the claimed record ID for an executing
+// idempotent operation. Side-effecting services can use it to durably associate
+// their created resource with that record before the response is finalized.
+func IdempotencyRecordIDFromContext(ctx context.Context) (int64, bool) {
+	id, ok := ctx.Value(idempotencyRecordContextKey{}).(int64)
+	return id, ok && id > 0
+}
+
+func withIdempotencyRecordID(ctx context.Context, id int64) context.Context {
+	if id <= 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, idempotencyRecordContextKey{}, id)
+}
+
 type IdempotencyCoordinator struct {
 	repo IdempotencyRepository
 	cfg  IdempotencyConfig
@@ -397,7 +414,7 @@ func (c *IdempotencyCoordinator) Execute(
 		recordIdempotencyProcessingDuration(opts.Route, opts.Scope, time.Since(execStart), nil)
 	}()
 
-	data, execErr := execute(ctx)
+	data, execErr := execute(withIdempotencyRecordID(ctx, record.ID))
 	if execErr != nil {
 		backoffUntil := time.Now().Add(c.cfg.FailedRetryBackoff)
 		reason := infraerrors.Reason(execErr)

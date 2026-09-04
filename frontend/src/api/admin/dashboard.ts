@@ -317,16 +317,24 @@ export interface BatchApiKeysUsageResponse {
 /**
  * Get batch usage stats for multiple API keys
  * @param apiKeyIds - Array of API key IDs
+ * @param targetUserId - Optional user scope when an admin inspects another user's keys
+ * @param options - Request options, including cancellation
  * @returns Usage stats map keyed by API key ID
  */
 export async function getBatchApiKeysUsage(
-  apiKeyIds: number[]
+  apiKeyIds: number[],
+  targetUserId?: number,
+  options?: {
+    signal?: AbortSignal
+  }
 ): Promise<BatchApiKeysUsageResponse> {
   const { data } = await apiClient.post<BatchApiKeysUsageResponse>(
     '/admin/dashboard/api-keys-usage',
     {
-      api_key_ids: apiKeyIds
-    }
+      api_key_ids: apiKeyIds,
+      ...(targetUserId ? { target_user_id: targetUserId } : {}),
+    },
+    { signal: options?.signal },
   )
   return data
 }

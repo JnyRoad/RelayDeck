@@ -4,7 +4,15 @@
  */
 
 import { apiClient } from '../client'
-import type { AdminUser, UpdateUserRequest, PaginatedResponse, ApiKey } from '@/types'
+import type {
+  AdminUser,
+  ApiKey,
+  CreateApiKeyRequest,
+  Group,
+  PaginatedResponse,
+  UpdateApiKeyRequest,
+  UpdateUserRequest,
+} from '@/types'
 
 export interface AdminBindAuthIdentityChannelRequest {
   channel: string
@@ -226,6 +234,89 @@ export async function getUserApiKeys(id: number): Promise<PaginatedResponse<ApiK
   return data
 }
 
+/** List one target user's Keys with the same filter and cancellation contract as `/keys`. */
+export async function listUserApiKeys(
+  userID: number,
+  page: number = 1,
+  pageSize: number = 20,
+  filters?: {
+    search?: string
+    status?: string
+    group_id?: number | string
+    sort_by?: string
+    sort_order?: 'asc' | 'desc'
+  },
+  options?: {
+    signal?: AbortSignal
+  },
+): Promise<PaginatedResponse<ApiKey>> {
+  const { data } = await apiClient.get<PaginatedResponse<ApiKey>>(`/admin/users/${userID}/api-keys`, {
+    params: { page, page_size: pageSize, ...filters },
+    signal: options?.signal,
+  })
+  return data
+}
+
+// Keep one key per unchanged in-memory create submission. The payload remains only in
+// memory so a custom Key is never copied into browser storage or an idempotency header.
+const userAPIKeyCreateOperationKeys = new Map<string, string>()
+
+function userAPIKeyCreateOperationScope(userID: number, payload: CreateApiKeyRequest): string {
+  const canonicalPayload = Object.entries(payload).sort(([left], [right]) => left.localeCompare(right))
+  return `${userID}:${JSON.stringify(canonicalPayload)}`
+}
+
+/**
+ * Create a Key owned by the explicit target user.
+ * Reuses the same idempotency key after an ambiguous network failure for the same submission.
+ */
+export async function createUserApiKey(userID: number, payload: CreateApiKeyRequest): Promise<ApiKey> {
+  const scope = userAPIKeyCreateOperationScope(userID, payload)
+  let idempotencyKey = userAPIKeyCreateOperationKeys.get(scope)
+  if (!idempotencyKey) {
+    const requestID = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    idempotencyKey = `admin-user-api-key-create-${userID}-${requestID}`
+    userAPIKeyCreateOperationKeys.set(scope, idempotencyKey)
+  }
+
+  const { data } = await apiClient.post<ApiKey>(`/admin/users/${userID}/api-keys`, payload, {
+    headers: { 'Idempotency-Key': idempotencyKey },
+  })
+  userAPIKeyCreateOperationKeys.delete(scope)
+  return data
+}
+
+/** Update a Key only within the explicit target user's ownership scope. */
+export async function updateUserApiKey(
+  userID: number,
+  keyID: number,
+  updates: UpdateApiKeyRequest,
+): Promise<ApiKey> {
+  const { data } = await apiClient.put<ApiKey>(`/admin/users/${userID}/api-keys/${keyID}`, updates)
+  return data
+}
+
+/** Delete a Key only within the explicit target user's ownership scope. */
+export async function deleteUserApiKey(
+  userID: number,
+  keyID: number,
+): Promise<{ message: string }> {
+  const { data } = await apiClient.delete<{ message: string }>(`/admin/users/${userID}/api-keys/${keyID}`)
+  return data
+}
+
+/** Return the Groups the explicit target user may bind to a Key. */
+export async function getUserApiKeyAvailableGroups(userID: number): Promise<Group[]> {
+  const { data } = await apiClient.get<Group[]>(`/admin/users/${userID}/api-keys/available-groups`)
+  return data
+}
+
+/** Return the target user's Group-specific rate overrides. */
+export async function getUserApiKeyGroupRates(userID: number): Promise<Record<number, number>> {
+  const { data } = await apiClient.get<Record<number, number>>(`/admin/users/${userID}/api-keys/group-rates`)
+  return data
+}
+
 /**
  * Get user's usage statistics
  * @param id - User ID
@@ -410,6 +501,12 @@ export const usersAPI = {
   batchUpdateLimits,
   toggleStatus,
   getUserApiKeys,
+  listUserApiKeys,
+  createUserApiKey,
+  updateUserApiKey,
+  deleteUserApiKey,
+  getUserApiKeyAvailableGroups,
+  getUserApiKeyGroupRates,
   getUserUsageStats,
   getUserBalanceHistory,
   replaceGroup,

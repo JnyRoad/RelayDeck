@@ -10,6 +10,7 @@ import (
 	"github.com/JnyRoad/RelayDeck/internal/pkg/response"
 	"github.com/JnyRoad/RelayDeck/internal/pkg/timezone"
 	"github.com/JnyRoad/RelayDeck/internal/pkg/usagestats"
+	"github.com/JnyRoad/RelayDeck/internal/server/middleware"
 	"github.com/JnyRoad/RelayDeck/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -622,7 +623,8 @@ func (h *DashboardHandler) GetBatchUsersUsage(c *gin.Context) {
 
 // BatchAPIKeysUsageRequest represents the request body for batch api key usage stats
 type BatchAPIKeysUsageRequest struct {
-	APIKeyIDs []int64 `json:"api_key_ids" binding:"required"`
+	APIKeyIDs    []int64 `json:"api_key_ids" binding:"required"`
+	TargetUserID *int64  `json:"target_user_id"`
 }
 
 // GetBatchAPIKeysUsage handles getting usage stats for multiple API keys
@@ -634,6 +636,15 @@ func (h *DashboardHandler) GetBatchAPIKeysUsage(c *gin.Context) {
 		return
 	}
 
+	targetUserID := int64(0)
+	if req.TargetUserID != nil {
+		if *req.TargetUserID <= 0 {
+			response.BadRequest(c, "Invalid target user ID")
+			return
+		}
+		targetUserID = *req.TargetUserID
+		middleware.SetAuditExtra(c, map[string]any{"target_user_id": targetUserID})
+	}
 	apiKeyIDs := normalizeInt64IDList(req.APIKeyIDs)
 	if len(apiKeyIDs) == 0 {
 		response.Success(c, gin.H{"stats": map[string]any{}})
@@ -641,9 +652,11 @@ func (h *DashboardHandler) GetBatchAPIKeysUsage(c *gin.Context) {
 	}
 
 	keyRaw, _ := json.Marshal(struct {
-		APIKeyIDs []int64 `json:"api_key_ids"`
+		APIKeyIDs    []int64 `json:"api_key_ids"`
+		TargetUserID int64   `json:"target_user_id"`
 	}{
-		APIKeyIDs: apiKeyIDs,
+		APIKeyIDs:    apiKeyIDs,
+		TargetUserID: targetUserID,
 	})
 	cacheKey := string(keyRaw)
 	if cached, ok := dashboardBatchAPIKeysUsageCache.Get(cacheKey); ok {
@@ -652,7 +665,7 @@ func (h *DashboardHandler) GetBatchAPIKeysUsage(c *gin.Context) {
 		return
 	}
 
-	stats, err := h.dashboardService.GetBatchAPIKeyUsageStats(c.Request.Context(), apiKeyIDs, time.Time{}, time.Time{})
+	stats, err := h.dashboardService.GetBatchAPIKeyUsageStats(c.Request.Context(), apiKeyIDs, targetUserID, time.Time{}, time.Time{})
 	if err != nil {
 		response.Error(c, 500, "Failed to get API key usage stats")
 		return

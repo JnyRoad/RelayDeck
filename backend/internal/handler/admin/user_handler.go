@@ -12,6 +12,7 @@ import (
 
 	"github.com/JnyRoad/RelayDeck/internal/handler/dto"
 	"github.com/JnyRoad/RelayDeck/internal/handler/quotaview"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/pagination"
 	"github.com/JnyRoad/RelayDeck/internal/pkg/response"
 	"github.com/JnyRoad/RelayDeck/internal/server/middleware"
 	"github.com/JnyRoad/RelayDeck/internal/service"
@@ -25,6 +26,17 @@ type UserWithConcurrency struct {
 	CurrentConcurrency int `json:"current_concurrency"`
 }
 
+// targetUserAPIKeyManager defines the Key operations an administrator performs for one explicit target user.
+// APIKeyService implements this interface; keeping it narrow makes UserHandler testable without changing its constructor.
+type targetUserAPIKeyManager interface {
+	List(context.Context, int64, pagination.PaginationParams, service.APIKeyListFilters) ([]service.APIKey, *pagination.PaginationResult, error)
+	Create(context.Context, int64, service.CreateAPIKeyRequest) (*service.APIKey, error)
+	Update(context.Context, int64, int64, service.UpdateAPIKeyRequest) (*service.APIKey, error)
+	Delete(context.Context, int64, int64) error
+	GetAvailableGroups(context.Context, int64) ([]service.Group, error)
+	GetUserGroupRates(context.Context, int64) (map[int64]float64, error)
+}
+
 // UserHandler handles admin user management
 type UserHandler struct {
 	adminService          service.AdminService
@@ -34,6 +46,13 @@ type UserHandler struct {
 	totpService           *service.TotpService                // 角色提升为管理员的 step-up 门控
 	userService           *service.UserService
 	settingService        *service.SettingService // step-up 功能开关
+	apiKeyManager         targetUserAPIKeyManager
+}
+
+// SetAPIKeyManager injects the target-user Key capability after UserHandler construction.
+// It preserves existing constructor call sites while the production wire supplies APIKeyService.
+func (h *UserHandler) SetAPIKeyManager(manager targetUserAPIKeyManager) {
+	h.apiKeyManager = manager
 }
 
 // NewUserHandler creates a new admin user handler
@@ -55,6 +74,30 @@ func NewUserHandler(
 		userService:           userService,
 		settingService:        settingService,
 	}
+}
+
+// ProvideUserHandler constructs the administrator user handler with the Key capability required by target-user routes.
+func ProvideUserHandler(
+	adminService service.AdminService,
+	concurrencyService *service.ConcurrencyService,
+	userPlatformQuotaRepo service.UserPlatformQuotaRepository,
+	billingCache service.BillingCache,
+	totpService *service.TotpService,
+	userService *service.UserService,
+	settingService *service.SettingService,
+	apiKeyService *service.APIKeyService,
+) *UserHandler {
+	handler := NewUserHandler(
+		adminService,
+		concurrencyService,
+		userPlatformQuotaRepo,
+		billingCache,
+		totpService,
+		userService,
+		settingService,
+	)
+	handler.SetAPIKeyManager(apiKeyService)
+	return handler
 }
 
 // CreateUserRequest represents admin create user request
@@ -88,6 +131,36 @@ type UpdateUserRequest struct {
 	// GroupRates 用户专属分组倍率配置
 	// map[groupID]*rate，nil 表示删除该分组的专属倍率
 	GroupRates map[int64]*float64 `json:"group_rates"`
+}
+
+// AdminUserAPIKeyCreateRequest represents the administrator's target-user Key creation payload.
+type AdminUserAPIKeyCreateRequest struct {
+	Name          string   `json:"name" binding:"required"`
+	GroupID       *int64   `json:"group_id"`
+	CustomKey     *string  `json:"custom_key"`
+	IPWhitelist   []string `json:"ip_whitelist"`
+	IPBlacklist   []string `json:"ip_blacklist"`
+	Quota         *float64 `json:"quota"`
+	ExpiresInDays *int     `json:"expires_in_days"`
+	RateLimit5h   *float64 `json:"rate_limit_5h"`
+	RateLimit1d   *float64 `json:"rate_limit_1d"`
+	RateLimit7d   *float64 `json:"rate_limit_7d"`
+}
+
+// AdminUserAPIKeyUpdateRequest represents the administrator's target-user Key update payload.
+type AdminUserAPIKeyUpdateRequest struct {
+	Name                string    `json:"name"`
+	GroupID             *int64    `json:"group_id"`
+	Status              string    `json:"status" binding:"omitempty,oneof=active inactive"`
+	IPWhitelist         *[]string `json:"ip_whitelist"`
+	IPBlacklist         *[]string `json:"ip_blacklist"`
+	Quota               *float64  `json:"quota"`
+	ExpiresAt           *string   `json:"expires_at"`
+	ResetQuota          *bool     `json:"reset_quota"`
+	RateLimit5h         *float64  `json:"rate_limit_5h"`
+	RateLimit1d         *float64  `json:"rate_limit_1d"`
+	RateLimit7d         *float64  `json:"rate_limit_7d"`
+	ResetRateLimitUsage *bool     `json:"reset_rate_limit_usage"`
 }
 
 // UpdateBalanceRequest represents balance update request
@@ -416,30 +489,306 @@ func (h *UserHandler) UpdateBalance(c *gin.Context) {
 	})
 }
 
-// GetUserAPIKeys handles getting user's API keys
-// GET /api/v1/admin/users/:id/api-keys
-func (h *UserHandler) GetUserAPIKeys(c *gin.Context) {
+// getAPIKeyTargetUser parses and verifies the target user from an administrator Key route.
+func (h *UserHandler) getAPIKeyTargetUser(c *gin.Context) (int64, *service.User, bool) {
 	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil {
+	if err != nil || userID <= 0 {
 		response.BadRequest(c, "Invalid user ID")
-		return
+		return 0, nil, false
 	}
 
-	page, pageSize := response.ParsePagination(c)
-	sortBy := c.DefaultQuery("sort_by", "created_at")
-	sortOrder := c.DefaultQuery("sort_order", "desc")
+	target, err := h.adminService.GetUser(c.Request.Context(), userID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return 0, nil, false
+	}
+	return userID, target, true
+}
 
-	keys, total, err := h.adminService.GetUserAPIKeys(c.Request.Context(), userID, page, pageSize, sortBy, sortOrder)
+// requireAPIKeyManager returns the injected target-user Key service or a deterministic service-unavailable response.
+func (h *UserHandler) requireAPIKeyManager(c *gin.Context) (targetUserAPIKeyManager, bool) {
+	if h.apiKeyManager == nil {
+		response.Error(c, 503, "API key management service not available")
+		return nil, false
+	}
+	return h.apiKeyManager, true
+}
+
+// parseUserAPIKeyFilters extracts the same list query parameters accepted by the current-user Key endpoint.
+func parseUserAPIKeyFilters(c *gin.Context) service.APIKeyListFilters {
+	var filters service.APIKeyListFilters
+	if search := strings.TrimSpace(c.Query("search")); search != "" {
+		if runes := []rune(search); len(runes) > 100 {
+			search = string(runes[:100])
+		}
+		filters.Search = search
+	}
+	filters.Status = c.Query("status")
+	if groupIDText := c.Query("group_id"); groupIDText != "" {
+		if groupID, err := strconv.ParseInt(groupIDText, 10, 64); err == nil {
+			filters.GroupID = &groupID
+		}
+	}
+	return filters
+}
+
+// validateAdminUserAPIKeyCreateRequest rejects invalid numeric Key limits before invoking the service.
+func validateAdminUserAPIKeyCreateRequest(req AdminUserAPIKeyCreateRequest) error {
+	for _, value := range []*float64{req.Quota, req.RateLimit5h, req.RateLimit1d, req.RateLimit7d} {
+		if value != nil && (math.IsNaN(*value) || math.IsInf(*value, 0) || *value < 0) {
+			return errors.New("invalid API key limit")
+		}
+	}
+	if req.ExpiresInDays != nil && *req.ExpiresInDays <= 0 {
+		return errors.New("invalid API key expiration")
+	}
+	return nil
+}
+
+// validateAdminUserAPIKeyUpdateRequest rejects invalid numeric Key limits before invoking the service.
+func validateAdminUserAPIKeyUpdateRequest(req AdminUserAPIKeyUpdateRequest) error {
+	for _, value := range []*float64{req.Quota, req.RateLimit5h, req.RateLimit1d, req.RateLimit7d} {
+		if value != nil && (math.IsNaN(*value) || math.IsInf(*value, 0) || *value < 0) {
+			return errors.New("invalid API key limit")
+		}
+	}
+	return nil
+}
+
+// GetUserAPIKeys lists one target user's Keys with the full current-user filter and sort contract.
+// GET /api/v1/admin/users/:id/api-keys
+func (h *UserHandler) GetUserAPIKeys(c *gin.Context) {
+	userID, _, ok := h.getAPIKeyTargetUser(c)
+	if !ok {
+		return
+	}
+	manager, ok := h.requireAPIKeyManager(c)
+	if !ok {
+		return
+	}
+	page, pageSize := response.ParsePagination(c)
+	middleware.SetAuditExtra(c, map[string]any{"target_user_id": userID})
+
+	params := pagination.PaginationParams{
+		Page:      page,
+		PageSize:  pageSize,
+		SortBy:    c.DefaultQuery("sort_by", "created_at"),
+		SortOrder: c.DefaultQuery("sort_order", "desc"),
+	}
+	keys, result, err := manager.List(c.Request.Context(), userID, params, parseUserAPIKeyFilters(c))
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-
 	out := make([]dto.APIKey, 0, len(keys))
 	for i := range keys {
 		out = append(out, *dto.APIKeyFromService(&keys[i]))
 	}
-	response.Paginated(c, out, total, page, pageSize)
+	response.Paginated(c, out, result.Total, page, pageSize)
+}
+
+// CreateUserAPIKey creates a Key for an active target user.
+// POST /api/v1/admin/users/:id/api-keys
+func (h *UserHandler) CreateUserAPIKey(c *gin.Context) {
+	userID, target, ok := h.getAPIKeyTargetUser(c)
+	if !ok {
+		return
+	}
+	if !target.IsActive() {
+		response.Forbidden(c, "Cannot create API key for a disabled user")
+		return
+	}
+	manager, ok := h.requireAPIKeyManager(c)
+	if !ok {
+		return
+	}
+
+	var req AdminUserAPIKeyCreateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if err := validateAdminUserAPIKeyCreateRequest(req); err != nil {
+		response.BadRequest(c, "Invalid request: numeric limits must be finite and non-negative, and expires_in_days must be greater than zero")
+		return
+	}
+
+	svcReq := service.CreateAPIKeyRequest{
+		Name:          req.Name,
+		GroupID:       req.GroupID,
+		CustomKey:     req.CustomKey,
+		IPWhitelist:   req.IPWhitelist,
+		IPBlacklist:   req.IPBlacklist,
+		ExpiresInDays: req.ExpiresInDays,
+	}
+	if req.Quota != nil {
+		svcReq.Quota = *req.Quota
+	}
+	if req.RateLimit5h != nil {
+		svcReq.RateLimit5h = *req.RateLimit5h
+	}
+	if req.RateLimit1d != nil {
+		svcReq.RateLimit1d = *req.RateLimit1d
+	}
+	if req.RateLimit7d != nil {
+		svcReq.RateLimit7d = *req.RateLimit7d
+	}
+
+	middleware.SetAuditExtra(c, map[string]any{"target_user_id": userID})
+	payload := struct {
+		UserID int64                        `json:"user_id"`
+		Body   AdminUserAPIKeyCreateRequest `json:"body"`
+	}{UserID: userID, Body: req}
+	executeAdminIdempotentJSON(c, "admin.users.api_keys.create", payload, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
+		key, err := manager.Create(ctx, userID, svcReq)
+		if err != nil {
+			return nil, err
+		}
+		middleware.SetAuditExtra(c, map[string]any{"api_key_id": key.ID})
+		return dto.APIKeyFromService(key), nil
+	})
+}
+
+// UpdateUserAPIKey updates one Key while APIKeyService verifies it belongs to the path's target user.
+// PUT /api/v1/admin/users/:id/api-keys/:key_id
+func (h *UserHandler) UpdateUserAPIKey(c *gin.Context) {
+	userID, target, ok := h.getAPIKeyTargetUser(c)
+	if !ok {
+		return
+	}
+	if !target.IsActive() {
+		response.Forbidden(c, "Cannot modify API key for a disabled user")
+		return
+	}
+	manager, ok := h.requireAPIKeyManager(c)
+	if !ok {
+		return
+	}
+	keyID, err := strconv.ParseInt(c.Param("key_id"), 10, 64)
+	if err != nil || keyID <= 0 {
+		response.BadRequest(c, "Invalid key ID")
+		return
+	}
+
+	var req AdminUserAPIKeyUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if err := validateAdminUserAPIKeyUpdateRequest(req); err != nil {
+		response.BadRequest(c, "Invalid request: numeric limits must be finite and non-negative")
+		return
+	}
+
+	svcReq := service.UpdateAPIKeyRequest{
+		IPWhitelist:         req.IPWhitelist,
+		IPBlacklist:         req.IPBlacklist,
+		Quota:               req.Quota,
+		ResetQuota:          req.ResetQuota,
+		RateLimit5h:         req.RateLimit5h,
+		RateLimit1d:         req.RateLimit1d,
+		RateLimit7d:         req.RateLimit7d,
+		ResetRateLimitUsage: req.ResetRateLimitUsage,
+	}
+	if req.Name != "" {
+		svcReq.Name = &req.Name
+	}
+	svcReq.GroupID = req.GroupID
+	if req.Status != "" {
+		svcReq.Status = &req.Status
+	}
+	if req.ExpiresAt != nil {
+		if *req.ExpiresAt == "" {
+			svcReq.ClearExpiration = true
+		} else {
+			expiresAt, err := time.Parse(time.RFC3339, *req.ExpiresAt)
+			if err != nil {
+				response.BadRequest(c, "Invalid expires_at format: "+err.Error())
+				return
+			}
+			svcReq.ExpiresAt = &expiresAt
+		}
+	}
+
+	middleware.SetAuditExtra(c, map[string]any{"target_user_id": userID, "api_key_id": keyID})
+	key, err := manager.Update(c.Request.Context(), keyID, userID, svcReq)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, dto.APIKeyFromService(key))
+}
+
+// DeleteUserAPIKey removes one Key after APIKeyService verifies target-user ownership.
+// DELETE /api/v1/admin/users/:id/api-keys/:key_id
+func (h *UserHandler) DeleteUserAPIKey(c *gin.Context) {
+	userID, target, ok := h.getAPIKeyTargetUser(c)
+	if !ok {
+		return
+	}
+	if !target.IsActive() {
+		response.Forbidden(c, "Cannot modify API key for a disabled user")
+		return
+	}
+	manager, ok := h.requireAPIKeyManager(c)
+	if !ok {
+		return
+	}
+	keyID, err := strconv.ParseInt(c.Param("key_id"), 10, 64)
+	if err != nil || keyID <= 0 {
+		response.BadRequest(c, "Invalid key ID")
+		return
+	}
+	middleware.SetAuditExtra(c, map[string]any{"target_user_id": userID, "api_key_id": keyID})
+	if err := manager.Delete(c.Request.Context(), keyID, userID); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"message": "API key deleted successfully"})
+}
+
+// GetUserAPIKeyAvailableGroups returns the groups the target user is allowed to bind to a Key.
+// GET /api/v1/admin/users/:id/api-keys/available-groups
+func (h *UserHandler) GetUserAPIKeyAvailableGroups(c *gin.Context) {
+	userID, _, ok := h.getAPIKeyTargetUser(c)
+	if !ok {
+		return
+	}
+	manager, ok := h.requireAPIKeyManager(c)
+	if !ok {
+		return
+	}
+	middleware.SetAuditExtra(c, map[string]any{"target_user_id": userID})
+	groups, err := manager.GetAvailableGroups(c.Request.Context(), userID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	out := make([]dto.Group, 0, len(groups))
+	for i := range groups {
+		out = append(out, *dto.GroupFromService(&groups[i]))
+	}
+	response.Success(c, out)
+}
+
+// GetUserAPIKeyGroupRates returns target-user-specific group rate overrides.
+// GET /api/v1/admin/users/:id/api-keys/group-rates
+func (h *UserHandler) GetUserAPIKeyGroupRates(c *gin.Context) {
+	userID, _, ok := h.getAPIKeyTargetUser(c)
+	if !ok {
+		return
+	}
+	manager, ok := h.requireAPIKeyManager(c)
+	if !ok {
+		return
+	}
+	middleware.SetAuditExtra(c, map[string]any{"target_user_id": userID})
+	rates, err := manager.GetUserGroupRates(c.Request.Context(), userID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, rates)
 }
 
 // GetUserUsage handles getting user's usage statistics

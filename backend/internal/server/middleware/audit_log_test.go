@@ -152,6 +152,42 @@ func TestPasskeyLoginAuditUsesCanonicalLoginActionAndOmitsCredentialBody(t *test
 	require.Contains(t, auditBodyOmittedRoutes, route)
 }
 
+// TestAdminUserAPIKeyAuditKeepsTargetIdentityWithoutPersistingCustomKey verifies the new Key routes remain traceable but secret-free.
+func TestAdminUserAPIKeyAuditKeepsTargetIdentityWithoutPersistingCustomKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repository := &auditCaptureRepository{}
+	auditService := service.NewAuditLogService(repository, nil)
+	auditService.Start()
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(string(ContextKeyUser), AuthSubject{UserID: 77})
+		c.Set(string(ContextKeyUserRole), "admin")
+		c.Next()
+	})
+	router.Use(gin.HandlerFunc(NewAuditLogMiddleware(auditService)))
+	router.POST("/api/v1/admin/users/:id/api-keys", func(c *gin.Context) {
+		SetAuditExtra(c, map[string]any{"target_user_id": int64(42), "api_key_id": int64(11)})
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/users/42/api-keys", bytes.NewBufferString(`{"name":"assigned","custom_key":"sk-audit-canary-secret"}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	auditService.Stop()
+
+	repository.mu.Lock()
+	logs := append([]*service.AuditLog(nil), repository.logs...)
+	repository.mu.Unlock()
+	require.Len(t, logs, 1)
+	require.Equal(t, "admin.users.api_keys.create", logs[0].Action)
+	require.EqualValues(t, 42, logs[0].Extra["target_user_id"])
+	require.EqualValues(t, 11, logs[0].Extra["api_key_id"])
+	require.NotContains(t, logs[0].RequestBody, "sk-audit-canary-secret")
+}
+
 // Ollama 会话保存的请求体整体就是浏览器 Cookie 明文，键级脱敏清单曾漏掉裸键
 // "session"，必须走整体不入库路径，防止会话凭证长期留存在 audit_logs。
 func TestOllamaCloudUsageSessionRouteOmitsAuditBody(t *testing.T) {

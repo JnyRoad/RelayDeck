@@ -1,6 +1,6 @@
 <template>
-  <AppLayout>
-    <TablePageLayout>
+  <component :is="embedded ? 'div' : AppLayout" :class="{ 'keys-workspace-embedded': embedded }">
+    <TablePageLayout :embedded="embedded">
       <template #filters>
         <div class="flex flex-col gap-3">
           <div class="flex flex-wrap items-center gap-3">
@@ -191,15 +191,17 @@
             <div class="text-sm">
               <div class="flex items-center gap-1.5">
                 <span class="text-gray-500 dark:text-gray-400">{{ t('keys.today') }}:</span>
-                <span class="font-medium text-gray-900 dark:text-white">
+                <span v-if="usageStatsAvailable" class="font-medium text-gray-900 dark:text-white">
                   ${{ (usageStats[row.id]?.today_actual_cost ?? 0).toFixed(4) }}
                 </span>
+                <span v-else class="font-medium text-gray-500 dark:text-gray-400">-</span>
               </div>
               <div class="mt-0.5 flex items-center gap-1.5">
                 <span class="text-gray-500 dark:text-gray-400">{{ t('keys.total') }}:</span>
-                <span class="font-medium text-gray-900 dark:text-white">
+                <span v-if="usageStatsAvailable" class="font-medium text-gray-900 dark:text-white">
                   ${{ (usageStats[row.id]?.total_actual_cost ?? 0).toFixed(4) }}
                 </span>
+                <span v-else class="font-medium text-gray-500 dark:text-gray-400">-</span>
               </div>
               <!-- Quota progress (if quota is set) -->
               <div v-if="row.quota > 0" class="mt-1.5">
@@ -1113,7 +1115,7 @@
         </div>
       </div>
     </Teleport>
-  </AppLayout>
+  </component>
 </template>
 
 <script setup lang="ts">
@@ -1149,6 +1151,15 @@ import {
   buildCcSwitchImportDeeplink,
   type CcSwitchClientType
 } from '@/utils/ccswitchImport'
+import type { KeyManagementAdapter } from '@/components/keys/keyManagementAdapter'
+
+const props = withDefaults(defineProps<{
+  adapter?: KeyManagementAdapter
+  embedded?: boolean
+}>(), {
+  adapter: undefined,
+  embedded: false,
+})
 
 // Helper to format date for datetime-local input
 const formatDateTimeLocal = (isoDate: string): string => {
@@ -1174,6 +1185,20 @@ interface GroupOption {
 const appStore = useAppStore()
 const onboardingStore = useOnboardingStore()
 const { copyToClipboard: clipboardCopy } = useClipboard()
+
+const currentUserKeyAdapter: KeyManagementAdapter = {
+  list: keysAPI.list,
+  create: keysAPI.createFromRequest,
+  update: keysAPI.update,
+  delete: keysAPI.delete,
+  getAvailableGroups: userGroupsAPI.getAvailable,
+  getUserGroupRates: userGroupsAPI.getUserGroupRates,
+  getUsageStats: usageAPI.getDashboardApiKeysUsage,
+}
+
+const keyAdapter = computed(() => props.adapter ?? currentUserKeyAdapter)
+const embedded = computed(() => props.embedded)
+const usageStatsAvailable = computed(() => typeof keyAdapter.value.getUsageStats === 'function')
 
 const allColumns = computed<Column[]>(() => [
   { key: 'name', label: t('common.name'), sortable: true },
@@ -1472,19 +1497,22 @@ const loadApiKeys = async () => {
     filters.sort_by = sortState.value.sort_by
     filters.sort_order = sortState.value.sort_order
 
-    const response = await keysAPI.list(pagination.value.page, pagination.value.page_size, filters, {
+    const response = await keyAdapter.value.list(pagination.value.page, pagination.value.page_size, filters, {
       signal
     })
     if (signal.aborted) return
     apiKeys.value = response.items
     pagination.value.total = response.total
     pagination.value.pages = response.pages
+    usageStats.value = {}
 
-    // Load usage stats for all API keys in the list
-    if (response.items.length > 0) {
+    // Load usage stats for all API keys in the list.
+    if (response.items.length > 0 && usageStatsAvailable.value) {
       const keyIds = response.items.map((k) => k.id)
+      const getUsageStats = keyAdapter.value.getUsageStats
+      if (!getUsageStats) return
       try {
-        const usageResponse = await usageAPI.getDashboardApiKeysUsage(keyIds, { signal })
+        const usageResponse = await getUsageStats(keyIds, { signal })
         if (signal.aborted) return
         usageStats.value = usageResponse.stats
       } catch (e) {
@@ -1507,7 +1535,7 @@ const loadApiKeys = async () => {
 
 const loadGroups = async () => {
   try {
-    groups.value = await userGroupsAPI.getAvailable()
+    groups.value = await keyAdapter.value.getAvailableGroups()
   } catch (error) {
     console.error('Failed to load groups:', error)
   }
@@ -1515,7 +1543,7 @@ const loadGroups = async () => {
 
 const loadUserGroupRates = async () => {
   try {
-    userGroupRates.value = await userGroupsAPI.getUserGroupRates()
+    userGroupRates.value = await keyAdapter.value.getUserGroupRates()
   } catch (error) {
     console.error('Failed to load user group rates:', error)
   }
@@ -1586,7 +1614,7 @@ const editKey = (key: ApiKey) => {
 const toggleKeyStatus = async (key: ApiKey) => {
   const newStatus = key.status === 'active' ? 'inactive' : 'active'
   try {
-    await keysAPI.toggleStatus(key.id, newStatus)
+    await keyAdapter.value.update(key.id, { status: newStatus })
     appStore.showSuccess(
       newStatus === 'active' ? t('keys.keyEnabledSuccess') : t('keys.keyDisabledSuccess')
     )
@@ -1636,7 +1664,7 @@ const changeGroup = async (key: ApiKey, newGroupId: number | null) => {
   if (key.group_id === newGroupId) return
 
   try {
-    await keysAPI.update(key.id, { group_id: newGroupId })
+    await keyAdapter.value.update(key.id, { group_id: newGroupId })
     appStore.showSuccess(t('keys.groupChangedSuccess'))
     loadApiKeys()
   } catch (error) {
@@ -1732,20 +1760,22 @@ const handleSubmit = async () => {
       if (shouldSubmitEditStatus(selectedKey.value, formData.value.status)) {
         updates.status = formData.value.status
       }
-      await keysAPI.update(selectedKey.value.id, updates)
+      await keyAdapter.value.update(selectedKey.value.id, updates)
       appStore.showSuccess(t('keys.keyUpdatedSuccess'))
     } else {
       const customKey = formData.value.use_custom_key ? formData.value.custom_key : undefined
-      await keysAPI.create(
-        formData.value.name,
-        formData.value.group_id,
-        customKey,
-        ipWhitelist,
-        ipBlacklist,
+      await keyAdapter.value.create({
+        name: formData.value.name,
+        group_id: formData.value.group_id,
+        custom_key: customKey,
+        ip_whitelist: ipWhitelist,
+        ip_blacklist: ipBlacklist,
         quota,
-        expiresInDays,
-        rateLimitData
-      )
+        expires_in_days: expiresInDays,
+        rate_limit_5h: rateLimitData.rate_limit_5h,
+        rate_limit_1d: rateLimitData.rate_limit_1d,
+        rate_limit_7d: rateLimitData.rate_limit_7d,
+      })
       appStore.showSuccess(t('keys.keyCreatedSuccess'))
       // Only advance tour if active, on submit step, and creation succeeded
       if (onboardingStore.isCurrentStep('[data-tour="key-form-submit"]')) {
@@ -1772,7 +1802,7 @@ const handleDelete = async () => {
   if (!selectedKey.value) return
 
   try {
-    await keysAPI.delete(selectedKey.value.id)
+    await keyAdapter.value.delete(selectedKey.value.id)
     appStore.showSuccess(t('keys.keyDeletedSuccess'))
     showDeleteDialog.value = false
     loadApiKeys()
@@ -1826,7 +1856,7 @@ const resetQuotaUsed = async () => {
   if (!selectedKey.value) return
   showResetQuotaDialog.value = false
   try {
-    await keysAPI.update(selectedKey.value.id, { reset_quota: true })
+    await keyAdapter.value.update(selectedKey.value.id, { reset_quota: true })
     appStore.showSuccess(t('keys.quotaResetSuccess'))
     // Update local state
     if (selectedKey.value) {
@@ -1854,7 +1884,7 @@ const resetRateLimitUsage = async () => {
   if (!selectedKey.value) return
   showResetRateLimitDialog.value = false
   try {
-    await keysAPI.update(selectedKey.value.id, { reset_rate_limit_usage: true })
+    await keyAdapter.value.update(selectedKey.value.id, { reset_rate_limit_usage: true })
     appStore.showSuccess(t('keys.rateLimitResetSuccess'))
     // Refresh key data
     await loadApiKeys()
@@ -1964,6 +1994,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+	abortController?.abort()
   document.removeEventListener('click', closeGroupSelector)
   if (resetTimer) clearInterval(resetTimer)
 })

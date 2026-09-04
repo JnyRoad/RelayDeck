@@ -424,8 +424,9 @@ func (s *DashboardService) GetBatchUserUsageStats(ctx context.Context, userIDs [
 	return stats, nil
 }
 
-func (s *DashboardService) GetBatchAPIKeyUsageStats(ctx context.Context, apiKeyIDs []int64, startTime, endTime time.Time) (map[int64]*usagestats.BatchAPIKeyUsageStats, error) {
-	stats, err := s.usageRepo.GetBatchAPIKeyUsageStats(ctx, apiKeyIDs, startTime, endTime)
+// GetBatchAPIKeyUsageStats returns per-Key usage while constraining records to userID when it is positive.
+func (s *DashboardService) GetBatchAPIKeyUsageStats(ctx context.Context, apiKeyIDs []int64, userID int64, startTime, endTime time.Time) (map[int64]*usagestats.BatchAPIKeyUsageStats, error) {
+	stats, err := s.usageRepo.GetBatchAPIKeyUsageStats(ctx, apiKeyIDs, userID, startTime, endTime)
 	if err != nil {
 		return nil, fmt.Errorf("get batch api key usage stats: %w", err)
 	}

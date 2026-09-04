@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/JnyRoad/RelayDeck/internal/pkg/pagination"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -17,6 +18,9 @@ func setupAdminRouter() (*gin.Engine, *stubAdminService) {
 	adminSvc := newStubAdminService()
 
 	userHandler := NewUserHandler(adminSvc, nil, nil, nil, nil, nil, nil)
+	userHandler.SetAPIKeyManager(&adminUserAPIKeyManagerStub{
+		pagination: &pagination.PaginationResult{Page: 1, PageSize: 20, Pages: 1},
+	})
 	groupHandler := NewGroupHandler(adminSvc, nil, nil)
 	proxyHandler := NewProxyHandler(adminSvc)
 	redeemHandler := NewRedeemHandler(adminSvc, nil)

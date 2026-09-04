@@ -3,6 +3,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
 
 import type { ApiKey } from '@/types'
+import type { KeyManagementAdapter } from '@/components/keys/keyManagementAdapter'
 import KeysView from '../KeysView.vue'
 
 const {
@@ -52,6 +53,8 @@ const messages: Record<string, string> = {
   'keys.status.expired': 'Expired',
   'keys.status.inactive': 'Inactive',
   'keys.status.quota_exhausted': 'Quota exhausted',
+  'keys.today': 'Today',
+  'keys.total': 'Total',
   'keys.usage': 'Usage',
 }
 
@@ -174,6 +177,12 @@ const DataTableStub = {
           <slot name="cell-current_concurrency" :value="row.current_concurrency" :row="row" />
         </div>
         <div
+          v-if="columns.some((col) => col.key === 'usage')"
+          data-test="key-usage"
+        >
+          <slot name="cell-usage" :row="row" />
+        </div>
+        <div
           v-if="columns.some((col) => col.key === 'last_used_ip')"
           data-test="last-used-ip"
         >
@@ -215,8 +224,9 @@ const IconStub = {
   template: '<span data-test="icon">{{ name }}</span>',
 }
 
-const mountView = async () => {
+const mountView = async (adapter?: KeyManagementAdapter) => {
   const wrapper = mount(KeysView, {
+    props: { adapter },
     global: {
       stubs: {
         AppLayout: AppLayoutStub,
@@ -437,5 +447,26 @@ describe('user KeysView column settings', () => {
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
+  })
+
+  it('renders usage as unavailable when the supplied adapter cannot load it', async () => {
+    const adapter: KeyManagementAdapter = {
+      list: async () => ({
+        items: [createApiKey()],
+        total: 1,
+        page: 1,
+        page_size: 20,
+        pages: 1,
+      }),
+      create: async () => createApiKey(),
+      update: async () => createApiKey(),
+      delete: async () => ({ message: 'deleted' }),
+      getAvailableGroups: async () => [],
+      getUserGroupRates: async () => ({}),
+    }
+
+    const wrapper = await mountView(adapter)
+
+    expect(wrapper.get('[data-test="key-usage"]').text()).toBe('Today:-Total:-')
   })
 })
