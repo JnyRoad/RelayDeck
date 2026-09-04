@@ -13,11 +13,15 @@ func (r *PostgresRepository) PreviewExpired(ctx context.Context, cutoff time.Tim
 	}
 	preview := CleanupPreview{CutoffAt: cutoff.UTC()}
 	err := r.db.QueryRowContext(ctx, `
-		SELECT COUNT(DISTINCT t.id), COUNT(p.id), COALESCE(SUM(p.stored_bytes), 0)
-		FROM model_call_traces t
-		LEFT JOIN model_call_payloads p ON p.model_call_trace_id=t.id
-		WHERE t.expires_at <= $1
-	`, preview.CutoffAt).Scan(&preview.ExpiredTraces, &preview.ExpiredPayloads, &preview.StoredBytes)
+		WITH targets AS MATERIALIZED (
+			SELECT id FROM model_call_traces WHERE expires_at <= $1
+		)
+		SELECT
+			(SELECT COUNT(*) FROM targets),
+			(SELECT COUNT(*) FROM model_call_trace_attempts attempt JOIN targets ON targets.id=attempt.model_call_trace_id),
+			(SELECT COUNT(*) FROM model_call_payloads payload JOIN targets ON targets.id=payload.model_call_trace_id),
+			(SELECT COALESCE(SUM(payload.stored_bytes), 0) FROM model_call_payloads payload JOIN targets ON targets.id=payload.model_call_trace_id)
+	`, preview.CutoffAt).Scan(&preview.ExpiredTraces, &preview.ExpiredAttempts, &preview.ExpiredPayloads, &preview.StoredBytes)
 	if err != nil {
 		return CleanupPreview{}, fmt.Errorf("preview expired model traces: %w", err)
 	}
@@ -41,20 +45,20 @@ func (r *PostgresRepository) DeleteExpired(ctx context.Context, cutoff time.Time
 			ORDER BY expires_at ASC, id ASC
 			LIMIT $2
 		), metrics AS MATERIALIZED (
-			SELECT COUNT(DISTINCT target.id) AS deleted_traces,
-				COUNT(payload.id) AS deleted_payloads,
-				COALESCE(SUM(payload.stored_bytes), 0) AS deleted_bytes
-			FROM targets target
-			LEFT JOIN model_call_payloads payload ON payload.model_call_trace_id=target.id
+			SELECT
+				(SELECT COUNT(*) FROM targets) AS deleted_traces,
+				(SELECT COUNT(*) FROM model_call_trace_attempts attempt JOIN targets ON targets.id=attempt.model_call_trace_id) AS deleted_attempts,
+				(SELECT COUNT(*) FROM model_call_payloads payload JOIN targets ON targets.id=payload.model_call_trace_id) AS deleted_payloads,
+				(SELECT COALESCE(SUM(payload.stored_bytes), 0) FROM model_call_payloads payload JOIN targets ON targets.id=payload.model_call_trace_id) AS deleted_bytes
 		), deleted AS (
 			DELETE FROM model_call_traces trace
 			USING targets target
 			WHERE trace.id=target.id
 			RETURNING trace.id
 		)
-		SELECT (SELECT COUNT(*) FROM deleted), metrics.deleted_payloads, metrics.deleted_bytes
+		SELECT (SELECT COUNT(*) FROM deleted), metrics.deleted_attempts, metrics.deleted_payloads, metrics.deleted_bytes
 		FROM metrics
-	`, cutoff.UTC(), batchSize).Scan(&result.DeletedTraces, &result.DeletedPayloads, &result.DeletedBytes)
+	`, cutoff.UTC(), batchSize).Scan(&result.DeletedTraces, &result.DeletedAttempts, &result.DeletedPayloads, &result.DeletedBytes)
 	if err != nil {
 		return CleanupResult{}, fmt.Errorf("delete expired model traces: %w", err)
 	}
@@ -91,10 +95,10 @@ func (r *PostgresRepository) FinishCleanupRun(ctx context.Context, runID int64, 
 	}
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE model_call_trace_cleanup_runs
-		SET status=$2, deleted_traces=$3, deleted_payloads=$4, deleted_bytes=$5,
-			error_code=$6, finished_at=$7
+		SET status=$2, deleted_traces=$3, deleted_attempts=$4, deleted_payloads=$5, deleted_bytes=$6,
+			error_code=$7, finished_at=$8
 		WHERE id=$1
-	`, runID, status, result.DeletedTraces, result.DeletedPayloads, result.DeletedBytes, errorCode, time.Now().UTC())
+	`, runID, status, result.DeletedTraces, result.DeletedAttempts, result.DeletedPayloads, result.DeletedBytes, errorCode, time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("finish model trace cleanup run: %w", err)
 	}

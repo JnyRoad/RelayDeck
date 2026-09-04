@@ -7,6 +7,7 @@ import (
 	"testing/fstest"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
+	"github.com/JnyRoad/RelayDeck/migrations"
 	"github.com/stretchr/testify/require"
 )
 
@@ -228,6 +229,44 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_usage_logs_effective_upstream_model_
 	}
 
 	err = applyMigrationsFS(context.Background(), db, fsys)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestApplyMigrationsFS_ModelCallTraceIndexesDropInvalidOrUnreadyIndexesBeforeRetry(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	prepareMigrationsBootstrapExpectations(mock)
+	mock.ExpectQuery("SELECT checksum FROM schema_migrations WHERE filename = \\$1").
+		WithArgs(modelCallTraceIndexesMigration).
+		WillReturnError(sql.ErrNoRows)
+	for _, indexName := range modelCallTraceIndexNames {
+		mock.ExpectQuery("NOT i\\.indisvalid OR NOT i\\.indisready").
+			WithArgs(indexName).
+			WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+		mock.ExpectExec("DROP INDEX CONCURRENTLY IF EXISTS " + indexName).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+	}
+	for _, indexName := range modelCallTraceIndexNames {
+		mock.ExpectExec("CREATE INDEX CONCURRENTLY IF NOT EXISTS " + indexName).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+	}
+	mock.ExpectExec("INSERT INTO schema_migrations \\(filename, checksum\\) VALUES \\(\\$1, \\$2\\)").
+		WithArgs(modelCallTraceIndexesMigration, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("SELECT pg_advisory_unlock\\(\\$1\\)").
+		WithArgs(migrationsAdvisoryLockID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	content, err := migrations.FS.ReadFile(modelCallTraceIndexesMigration)
+	require.NoError(t, err)
+	fSys := fstest.MapFS{
+		modelCallTraceIndexesMigration: &fstest.MapFile{Data: content},
+	}
+
+	err = applyMigrationsFS(context.Background(), db, fSys)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }

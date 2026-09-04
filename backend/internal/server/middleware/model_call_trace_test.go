@@ -28,6 +28,21 @@ type modelTraceRecorderStub struct {
 	tracingActive bool
 }
 
+// streamingModelTraceRecorderStub exposes the optional streaming capability so
+// middleware tests can prove large bodies do not fall back to one final buffer.
+type streamingModelTraceRecorderStub struct {
+	modelTraceRecorderStub
+	streams []*modelTracePayloadStreamStub
+}
+
+// modelTracePayloadStreamStub records bytes written through one streaming body
+// sink without adding a real persistence dependency to middleware tests.
+type modelTracePayloadStreamStub struct {
+	input  modeltrace.PayloadInput
+	body   []byte
+	closed bool
+}
+
 // Start creates a deterministic handle for middleware tests and records the
 // supplied call metadata without performing storage I/O.
 func (s *modelTraceRecorderStub) Start(_ context.Context, input modeltrace.StartInput) (modeltrace.TraceHandle, error) {
@@ -47,6 +62,27 @@ func (s *modelTraceRecorderStub) RecordPayload(ctx context.Context, _ modeltrace
 func (s *modelTraceRecorderStub) Finish(ctx context.Context, _ modeltrace.TraceHandle, input modeltrace.FinishInput) error {
 	s.finished = append(s.finished, input)
 	s.finishCtxErr = append(s.finishCtxErr, ctx.Err())
+	return nil
+}
+
+// StartPayloadStream creates a test sink for one client request or response so
+// the middleware can use the optional fixed-memory streaming boundary.
+func (s *streamingModelTraceRecorderStub) StartPayloadStream(_ context.Context, _ modeltrace.TraceHandle, input modeltrace.PayloadInput) io.WriteCloser {
+	stream := &modelTracePayloadStreamStub{input: input}
+	s.streams = append(s.streams, stream)
+	return stream
+}
+
+// Write retains bytes only in the test double, where assertions need to compare
+// the complete observed body; the production sink performs bounded chunking.
+func (s *modelTracePayloadStreamStub) Write(body []byte) (int, error) {
+	s.body = append(s.body, body...)
+	return len(body), nil
+}
+
+// Close marks the test stream finalized after the wrapped HTTP flow completes.
+func (s *modelTracePayloadStreamStub) Close() error {
+	s.closed = true
 	return nil
 }
 
@@ -121,6 +157,40 @@ func TestModelCallTraceMiddlewareCapturesStreamingWrites(t *testing.T) {
 	}
 	if len(recorder.finished) != 1 || !recorder.finished[0].Stream {
 		t.Fatalf("finishes = %#v, want stream terminal state", recorder.finished)
+	}
+}
+
+// TestModelCallTraceMiddlewareStreamsLargeBodies verifies that the optional
+// streaming recorder receives request and response bytes as they flow, rather
+// than receiving one complete multi-chunk PayloadInput after the handler exits.
+// Removing the streaming branch must make this test fail by leaving streams empty.
+func TestModelCallTraceMiddlewareStreamsLargeBodies(t *testing.T) {
+	const bodyBytes = 2*256*1024 + 1
+	requestBody := `{"input":"` + strings.Repeat("x", bodyBytes) + `"}`
+	recorder := &streamingModelTraceRecorderStub{modelTraceRecorderStub: modelTraceRecorderStub{tracingActive: true}}
+	router := newModelTraceTestRouter(recorder, func(c *gin.Context) {
+		body, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			t.Fatalf("handler read request body: %v", err)
+		}
+		c.Data(http.StatusOK, "application/json", body)
+	})
+
+	rec := doModelTraceRequest(router, http.MethodPost, "/v1/responses", requestBody)
+
+	if rec.Code != http.StatusOK || rec.Body.String() != requestBody {
+		t.Fatalf("gateway response changed: status=%d bytes=%d", rec.Code, rec.Body.Len())
+	}
+	if len(recorder.streams) != 2 {
+		t.Fatalf("stream payloads=%d, want request and response", len(recorder.streams))
+	}
+	for index, stream := range recorder.streams {
+		if !stream.closed || string(stream.body) != requestBody {
+			t.Fatalf("stream %d closed=%t bytes=%d, want complete finalized body", index, stream.closed, len(stream.body))
+		}
+	}
+	if len(recorder.payloads) != 0 {
+		t.Fatalf("legacy buffered payloads=%d, want 0", len(recorder.payloads))
 	}
 }
 
@@ -207,6 +277,84 @@ func TestModelCallTraceMiddlewareCapturesResolvedIdentity(t *testing.T) {
 	}
 	if finished.RequestedModel != "public-model" || finished.UpstreamModel != "upstream-model" {
 		t.Fatalf("finish models = %#v", finished)
+	}
+}
+
+// TestModelCallTraceMiddlewareCapturesHistoricalIdentitySnapshots verifies
+// that trace completion carries display-safe identity values instead of API Key
+// material, so later rename or deletion cannot erase the call attribution.
+func TestModelCallTraceMiddlewareCapturesHistoricalIdentitySnapshots(t *testing.T) {
+	groupID := int64(33)
+	recorder := &modelTraceRecorderStub{tracingActive: true}
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(NewModelCallTraceMiddleware(recorder))
+	router.Use(func(c *gin.Context) {
+		c.Set(string(ContextKeyAPIKey), &service.APIKey{
+			ID: 22, UserID: 11, Name: "dingrui-key", GroupID: &groupID,
+			User:  &service.User{ID: 11, Email: "dingrui@szyuto.com"},
+			Group: &service.Group{ID: 33, Name: "development"},
+		})
+		ctx := context.WithValue(c.Request.Context(), ctxkey.AccountID, int64(44))
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	})
+	router.POST("/v1/chat/completions", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+
+	rec := doModelTraceRequest(router, http.MethodPost, "/v1/chat/completions", `{"model":"public-model"}`)
+
+	if rec.Code != http.StatusOK || len(recorder.finished) != 1 {
+		t.Fatalf("response=%d finishes=%#v", rec.Code, recorder.finished)
+	}
+	finished := recorder.finished[0]
+	if finished.UserSnapshot != "dingrui@szyuto.com" || finished.APIKeySnapshot != "dingrui-key" || finished.GroupSnapshot != "development" || finished.AccountSnapshot != "account#44" {
+		t.Fatalf("finish snapshots = %#v", finished)
+	}
+}
+
+// TestModelCallTraceMiddlewareCapturesExplicitConversationLinks verifies that
+// the final trace stores only session and lineage values parsed from the
+// client-visible request and delivered Responses API result.
+func TestModelCallTraceMiddlewareCapturesExplicitConversationLinks(t *testing.T) {
+	recorder := &modelTraceRecorderStub{tracingActive: true}
+	router := newModelTraceTestRouter(recorder, func(c *gin.Context) {
+		if _, err := io.ReadAll(c.Request.Body); err != nil {
+			t.Fatalf("handler read request body: %v", err)
+		}
+		c.Data(http.StatusOK, "application/json", []byte(`{"object":"response","id":"resp-current"}`))
+	})
+
+	rec := doModelTraceRequest(router, http.MethodPost, "/v1/responses", `{"conversation_id":"conversation-42","previous_response_id":"resp-previous"}`)
+
+	if rec.Code != http.StatusOK || len(recorder.finished) != 1 {
+		t.Fatalf("response=%d finishes=%#v", rec.Code, recorder.finished)
+	}
+	finished := recorder.finished[0]
+	if finished.SessionID != "conversation-42" || finished.PreviousResponseID != "resp-previous" || finished.ResponseID != "resp-current" {
+		t.Fatalf("finish conversation links = %#v", finished)
+	}
+}
+
+// TestModelCallTraceMiddlewareFindsConversationLinksBeyondStreamPrefix verifies
+// that enabling chunked persistence never reduces the bounded request prefix
+// available for protocol correlation fields that appear after a large input.
+func TestModelCallTraceMiddlewareFindsConversationLinksBeyondStreamPrefix(t *testing.T) {
+	requestBody := `{"input":"` + strings.Repeat("x", 96*1024) + `","conversation_id":"conversation-after-input"}`
+	recorder := &streamingModelTraceRecorderStub{modelTraceRecorderStub: modelTraceRecorderStub{tracingActive: true}}
+	router := newModelTraceTestRouter(recorder, func(c *gin.Context) {
+		if _, err := io.ReadAll(c.Request.Body); err != nil {
+			t.Fatalf("handler read request body: %v", err)
+		}
+		c.Data(http.StatusOK, "application/json", []byte(`{"object":"response","id":"resp-current"}`))
+	})
+
+	rec := doModelTraceRequest(router, http.MethodPost, "/v1/responses", requestBody)
+
+	if rec.Code != http.StatusOK || len(recorder.finished) != 1 {
+		t.Fatalf("response=%d finishes=%#v", rec.Code, recorder.finished)
+	}
+	if recorder.finished[0].SessionID != "conversation-after-input" {
+		t.Fatalf("finish conversation links = %#v, want session beyond streaming prefix", recorder.finished[0])
 	}
 }
 

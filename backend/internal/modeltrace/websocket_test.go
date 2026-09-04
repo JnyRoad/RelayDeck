@@ -2,10 +2,66 @@ package modeltrace
 
 import (
 	"context"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+// webSocketPayloadStreamStub captures one optional stream in test memory so
+// WebSocket tracing can be tested without a database-backed encryptor.
+type webSocketPayloadStreamStub struct {
+	body   []byte
+	closed bool
+}
+
+// Write appends one test frame while preserving the caller-visible byte count.
+func (s *webSocketPayloadStreamStub) Write(body []byte) (int, error) {
+	s.body = append(s.body, body...)
+	return len(body), nil
+}
+
+// Close marks the stream finalized after the terminal client event.
+func (s *webSocketPayloadStreamStub) Close() error {
+	s.closed = true
+	return nil
+}
+
+// webSocketStreamingRecorderStub exposes the optional stream capability while
+// retaining a legacy call list that must stay empty on the streaming path.
+type webSocketStreamingRecorderStub struct {
+	starts         []StartInput
+	legacyPayloads []PayloadInput
+	finishes       []FinishInput
+	streams        []*webSocketPayloadStreamStub
+}
+
+// Start records one deterministic enabled WebSocket trace handle.
+func (s *webSocketStreamingRecorderStub) Start(_ context.Context, input StartInput) (TraceHandle, error) {
+	s.starts = append(s.starts, input)
+	return TraceHandle{TraceID: "trace-ws-stream", Enabled: true, PayloadCaptureEnabled: true}, nil
+}
+
+// RecordPayload records only the legacy fallback path, which this regression
+// test expects a stream-capable recorder not to receive.
+func (s *webSocketStreamingRecorderStub) RecordPayload(_ context.Context, _ TraceHandle, input PayloadInput) error {
+	s.legacyPayloads = append(s.legacyPayloads, input)
+	return nil
+}
+
+// Finish records one terminal trace state for the stream-capable test recorder.
+func (s *webSocketStreamingRecorderStub) Finish(_ context.Context, _ TraceHandle, input FinishInput) error {
+	s.finishes = append(s.finishes, input)
+	return nil
+}
+
+// StartPayloadStream returns a test stream for each request or client-visible
+// response body that production code persists as bounded encrypted chunks.
+func (s *webSocketStreamingRecorderStub) StartPayloadStream(context.Context, TraceHandle, PayloadInput) io.WriteCloser {
+	stream := &webSocketPayloadStreamStub{}
+	s.streams = append(s.streams, stream)
+	return stream
+}
 
 // TestWebSocketTurnTracerPersistsBoundedClientVisibleTurn verifies that a
 // multi-frame WebSocket turn records the client request and client-visible
@@ -66,6 +122,35 @@ func TestWebSocketTurnTracerReleasesFinalizedTurn(t *testing.T) {
 	defer tracer.mu.Unlock()
 	if len(tracer.turns) != 0 {
 		t.Fatalf("retained finalized turns = %#v, want none", tracer.turns)
+	}
+}
+
+// TestWebSocketTurnTracerStreamsClientFrames verifies that valid frames are
+// serialized into the same raw-chain envelope while sent, without retaining a
+// complete `responseFrames` slice until the turn terminates.
+func TestWebSocketTurnTracerStreamsClientFrames(t *testing.T) {
+	recorder := &webSocketStreamingRecorderStub{}
+	tracer := NewWebSocketTurnTracer(recorder, "connection-request", "/v1/responses")
+	request := []byte(`{"type":"response.create","model":"gpt-test"}`)
+	first := []byte(`{"type":"response.output_text.delta","delta":"hello"}`)
+	terminal := []byte(`{"type":"response.completed","response":{"id":"resp_1"}}`)
+
+	tracer.Begin(context.Background(), 1, request)
+	tracer.AppendClientFrame(context.Background(), 1, first)
+	tracer.Complete(context.Background(), 1, FinishInput{Outcome: OutcomeSucceeded, Stream: true})
+	tracer.AppendClientFrame(context.Background(), 1, terminal)
+
+	if len(recorder.streams) != 2 {
+		t.Fatalf("stream count=%d, want request and response", len(recorder.streams))
+	}
+	if !recorder.streams[0].closed || string(recorder.streams[0].body) != string(request) {
+		t.Fatalf("request stream=%#v, want closed original request", recorder.streams[0])
+	}
+	if !recorder.streams[1].closed || string(recorder.streams[1].body) != `{"frames":[{"type":"response.output_text.delta","delta":"hello"},{"type":"response.completed","response":{"id":"resp_1"}}]}` {
+		t.Fatalf("response stream=%#v, want complete frame envelope", recorder.streams[1])
+	}
+	if len(recorder.legacyPayloads) != 0 {
+		t.Fatalf("legacy payloads=%#v, want none", recorder.legacyPayloads)
 	}
 }
 

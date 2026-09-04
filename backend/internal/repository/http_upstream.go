@@ -27,6 +27,8 @@ import (
 	"golang.org/x/net/http2"
 
 	"github.com/JnyRoad/RelayDeck/internal/config"
+	"github.com/JnyRoad/RelayDeck/internal/modeltrace"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/ctxkey"
 	"github.com/JnyRoad/RelayDeck/internal/pkg/proxyurl"
 	"github.com/JnyRoad/RelayDeck/internal/pkg/proxyutil"
 	"github.com/JnyRoad/RelayDeck/internal/pkg/servertiming"
@@ -211,12 +213,22 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 	if err != nil {
 		return nil, err
 	}
+	attempt := beginUpstreamTraceAttempt(req, accountID)
+	if attempt != nil {
+		req.Body = attempt.WrapRequestBody(req.Body)
+	}
 
 	// 执行请求
 	client := httpClientForUpstreamRequest(entry.client, req)
 	client = httpClientWithGrokAccessDeniedFallback(client)
 	resp, err := servertiming.Do(client, req)
+	if attempt != nil {
+		attempt.RecordRequest(req.Context(), req.Header.Get("Content-Type"))
+	}
 	if err != nil {
+		if attempt != nil {
+			attempt.RecordTransportError(req.Context())
+		}
 		s.recordOpenAIHTTP2Failure(profile, entry.protocolMode, entry.proxyKey, err)
 		// 请求失败，立即减少计数
 		atomic.AddInt64(&entry.inFlight, -1)
@@ -227,6 +239,9 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 
 	// 如果上游返回了压缩内容，解压后再交给业务层
 	decompressResponseBody(resp)
+	if attempt != nil {
+		resp.Body = attempt.WrapResponseBody(req.Context(), resp.Body, resp.Header.Get("Content-Type"), resp.StatusCode)
+	}
 
 	// 包装响应体，在关闭时自动减少计数并更新时间戳
 	// 这确保了流式响应（如 SSE）在完全读取前不会被淘汰
@@ -276,11 +291,21 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 		slog.Debug("tls_fingerprint_acquire_client_failed", "account_id", accountID, "error", err)
 		return nil, err
 	}
+	attempt := beginUpstreamTraceAttempt(req, accountID)
+	if attempt != nil {
+		req.Body = attempt.WrapRequestBody(req.Body)
+	}
 
 	client := httpClientForUpstreamRequest(entry.client, req)
 	client = httpClientWithGrokAccessDeniedFallback(client)
 	resp, err := servertiming.Do(client, req)
+	if attempt != nil {
+		attempt.RecordRequest(req.Context(), req.Header.Get("Content-Type"))
+	}
 	if err != nil {
+		if attempt != nil {
+			attempt.RecordTransportError(req.Context())
+		}
 		atomic.AddInt64(&entry.inFlight, -1)
 		atomic.StoreInt64(&entry.lastUsed, time.Now().UnixNano())
 		slog.Debug("tls_fingerprint_request_failed", "account_id", accountID, "error", err)
@@ -288,6 +313,9 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	}
 
 	decompressResponseBody(resp)
+	if attempt != nil {
+		resp.Body = attempt.WrapResponseBody(req.Context(), resp.Body, resp.Header.Get("Content-Type"), resp.StatusCode)
+	}
 
 	resp.Body = wrapTrackedBody(resp.Body, func() {
 		atomic.AddInt64(&entry.inFlight, -1)
@@ -295,6 +323,78 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	})
 
 	return resp, nil
+}
+
+// beginUpstreamTraceAttempt obtains the root-bound observer from a gateway
+// request context and passes only safe route, account and model summaries into
+// the transport trace. It never reads request headers or credentials.
+func beginUpstreamTraceAttempt(req *http.Request, accountID int64) *modeltrace.UpstreamAttempt {
+	if req == nil {
+		return nil
+	}
+	observer := modeltrace.UpstreamAttemptObserverFromContext(req.Context())
+	if observer == nil {
+		return nil
+	}
+	return observer.Begin(req.Context(), modeltrace.UpstreamAttemptInput{
+		AccountID:       upstreamAttemptAccountID(accountID),
+		AccountSnapshot: upstreamAttemptAccountSnapshot(accountID),
+		UpstreamRoute:   upstreamAttemptRoute(req),
+		UpstreamModel:   upstreamAttemptModel(req),
+	})
+}
+
+// upstreamAttemptAccountID returns nil for a non-account transport request so
+// optional foreign keys retain their database null semantics.
+func upstreamAttemptAccountID(accountID int64) *int64 {
+	if accountID <= 0 {
+		return nil
+	}
+	return &accountID
+}
+
+// upstreamAttemptAccountSnapshot returns a durable, non-secret fallback when
+// the shared transport does not receive the complete account record.
+func upstreamAttemptAccountSnapshot(accountID int64) string {
+	if accountID <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("account#%d", accountID)
+}
+
+// upstreamAttemptRoute retains only scheme, host and path. Query parameters,
+// fragments and URL user info are deliberately excluded as they can be secret.
+func upstreamAttemptRoute(req *http.Request) string {
+	if req == nil || req.URL == nil {
+		return ""
+	}
+	value := *req.URL
+	value.User = nil
+	value.RawQuery = ""
+	value.ForceQuery = false
+	value.Fragment = ""
+	value.RawFragment = ""
+	return value.String()
+}
+
+// upstreamAttemptModel reads a bounded model summary that the gateway already
+// resolved in trusted context; it never parses or persists raw headers.
+func upstreamAttemptModel(req *http.Request) string {
+	if req == nil {
+		return ""
+	}
+	for _, key := range []ctxkey.Key{ctxkey.ResolvedUpstreamModel, ctxkey.Model} {
+		if model, ok := req.Context().Value(key).(string); ok {
+			model = strings.TrimSpace(model)
+			if model != "" {
+				if runes := []rune(model); len(runes) > 200 {
+					return string(runes[:200])
+				}
+				return model
+			}
+		}
+	}
+	return ""
 }
 
 func httpClientForUpstreamRequest(client *http.Client, req *http.Request) *http.Client {

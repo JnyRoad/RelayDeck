@@ -27,6 +27,14 @@ type modelTraceCleanupRequest struct {
 	Confirm bool `json:"confirm"`
 }
 
+// modelTraceAccessEventRequest identifies one metadata-selected payload for
+// an administrator action without accepting any prompt or response content.
+type modelTraceAccessEventRequest struct {
+	Action    string                 `json:"action"`
+	Kind      modeltrace.PayloadKind `json:"kind"`
+	AttemptNo int                    `json:"attempt_no"`
+}
+
 // NewModelTraceHandler 以独立的查询、设置和清理依赖构建管理端处理器。
 func NewModelTraceHandler(queryService *modeltrace.QueryService, settings *modeltrace.SettingsConfigStore, cleanupService *modeltrace.CleanupService) *ModelTraceHandler {
 	return &ModelTraceHandler{
@@ -69,7 +77,49 @@ func (h *ModelTraceHandler) Detail(c *gin.Context) {
 	response.Success(c, detail)
 }
 
-// Payload 返回管理员明确选中的一种已脱敏正文，避免详情页一次读取全部密文。
+// Conversation returns one bounded protocol-confirmed replay window and its
+// payload metadata. Administrators must still select each individual body page.
+func (h *ModelTraceHandler) Conversation(c *gin.Context) {
+	if h == nil || h.queryService == nil {
+		response.InternalError(c, "Model trace query is unavailable")
+		return
+	}
+	page, ok := parseModelTraceConversationPage(c)
+	if !ok {
+		return
+	}
+	conversation, err := h.queryService.ConversationPage(c.Request.Context(), c.Param("traceID"), page)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, conversation)
+}
+
+// parseModelTraceConversationPage validates only transport-safe replay paging
+// inputs; service validation applies the final fixed fifty-turn maximum.
+func parseModelTraceConversationPage(c *gin.Context) (modeltrace.ConversationPageRequest, bool) {
+	page := modeltrace.ConversationPageRequest{
+		Direction: strings.TrimSpace(c.Query("direction")),
+		Cursor:    strings.TrimSpace(c.Query("cursor")),
+	}
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit < 1 {
+			response.BadRequest(c, "Invalid limit")
+			return modeltrace.ConversationPageRequest{}, false
+		}
+		page.Limit = limit
+	}
+	normalizedPage, err := modeltrace.ValidateConversationPageRequest(page)
+	if err != nil {
+		response.BadRequest(c, "Invalid conversation page")
+		return modeltrace.ConversationPageRequest{}, false
+	}
+	return normalizedPage, true
+}
+
+// Payload 返回管理员明确选中的一种已加密正文，避免详情页一次读取全部密文。
 func (h *ModelTraceHandler) Payload(c *gin.Context) {
 	if h == nil || h.queryService == nil {
 		response.InternalError(c, "Model trace query is unavailable")
@@ -84,12 +134,56 @@ func (h *ModelTraceHandler) Payload(c *gin.Context) {
 		}
 		attemptNo = parsed
 	}
-	payload, err := h.queryService.Payload(c.Request.Context(), c.Param("traceID"), modeltrace.PayloadKind(c.Param("kind")), attemptNo)
+	chunkNo := 0
+	if raw := strings.TrimSpace(c.Query("chunk_no")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			response.BadRequest(c, "Invalid chunk_no")
+			return
+		}
+		chunkNo = parsed
+	}
+	payload, err := h.queryService.PayloadPage(c.Request.Context(), c.Param("traceID"), modeltrace.PayloadKind(c.Param("kind")), attemptNo, chunkNo)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 	response.Success(c, payload)
+}
+
+// RecordAccessEvent validates a copy event against payload metadata only; the
+// audit middleware records identifiers while excluding the request body.
+func (h *ModelTraceHandler) RecordAccessEvent(c *gin.Context) {
+	if h == nil || h.queryService == nil {
+		response.InternalError(c, "Model trace query is unavailable")
+		return
+	}
+	var request modelTraceAccessEventRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		response.BadRequest(c, "Invalid model trace access event")
+		return
+	}
+	if strings.TrimSpace(request.Action) != "copy" || request.AttemptNo < 0 {
+		response.BadRequest(c, "Invalid model trace access event")
+		return
+	}
+	middleware.SetAuditAction(c, "admin.model_traces.payload.copy")
+	traceID := strings.TrimSpace(c.Param("traceID"))
+	exists, err := h.queryService.HasPayloadMetadata(c.Request.Context(), traceID, request.Kind, request.AttemptNo)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if !exists {
+		response.BadRequest(c, "Model trace payload does not exist")
+		return
+	}
+	middleware.SetAuditExtra(c, map[string]any{
+		"trace_id":     traceID,
+		"payload_kind": string(request.Kind),
+		"attempt_no":   request.AttemptNo,
+	})
+	response.Success(c, gin.H{})
 }
 
 // GetConfig 返回当前有效追踪与保留期设置，不包含任何密钥或正文。
@@ -144,6 +238,7 @@ func (h *ModelTraceHandler) RunCleanup(c *gin.Context) {
 		response.InternalError(c, "Model trace cleanup is unavailable")
 		return
 	}
+	middleware.SetAuditAction(c, "admin.model_traces.cleanup")
 	subject, ok := middleware.GetAuthSubjectFromContext(c)
 	if !ok || subject.UserID <= 0 {
 		response.Error(c, http.StatusUnauthorized, "Unauthorized")
@@ -166,9 +261,13 @@ func (h *ModelTraceHandler) RunCleanup(c *gin.Context) {
 func parseModelTraceFilter(c *gin.Context) (modeltrace.TraceFilter, bool) {
 	filter := modeltrace.TraceFilter{
 		TraceID:        strings.TrimSpace(c.Query("trace_id")),
+		User:           strings.TrimSpace(c.Query("user")),
+		APIKey:         strings.TrimSpace(c.Query("api_key")),
 		RequestID:      strings.TrimSpace(c.Query("request_id")),
+		SessionID:      strings.TrimSpace(c.Query("session_id")),
 		Route:          strings.TrimSpace(c.Query("route")),
 		RequestedModel: strings.TrimSpace(c.Query("requested_model")),
+		UpstreamModel:  strings.TrimSpace(c.Query("upstream_model")),
 		Protocol:       strings.TrimSpace(c.Query("protocol")),
 		Outcome:        modeltrace.Outcome(strings.TrimSpace(c.Query("outcome"))),
 		CaptureStatus:  modeltrace.CaptureStatus(strings.TrimSpace(c.Query("capture_status"))),

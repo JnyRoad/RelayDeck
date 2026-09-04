@@ -62,6 +62,15 @@ const usageLogsUpstreamModelMismatchIndex = "idx_usage_logs_upstream_model_misma
 const usageLogsEffectiveModelIndexesMigration = "226_add_usage_log_effective_model_indexes_notx.sql"
 const usageLogsEffectiveRequestedModelIndex = "idx_usage_logs_effective_requested_model_created"
 const usageLogsEffectiveUpstreamModelIndex = "idx_usage_logs_effective_upstream_model_created"
+const modelCallTraceIndexesMigration = "233_add_model_call_trace_indexes_notx.sql"
+
+var modelCallTraceIndexNames = []string{
+	"idx_model_call_traces_session_created",
+	"idx_model_call_traces_response_id",
+	"idx_model_call_traces_previous_response_id",
+	"idx_model_call_traces_user_snapshot_created",
+	"idx_model_call_traces_api_key_snapshot_created",
+}
 
 type migrationChecksumCompatibilityRule struct {
 	fileChecksum       string
@@ -293,14 +302,21 @@ func prepareNonTransactionalMigration(ctx context.Context, db migrationConnectio
 	case paymentOrdersOutTradeNoUniqueMigration:
 		return preparePaymentOrdersOutTradeNoUniqueMigration(ctx, db)
 	case schedulerOutboxPendingDedupKeyMigration:
-		return dropInvalidIndexIfPresent(ctx, db, schedulerOutboxPendingDedupKeyIndex)
+		return dropUnusableIndexIfPresent(ctx, db, schedulerOutboxPendingDedupKeyIndex)
 	case latestAPIKeyIPIndexMigration:
-		return dropInvalidIndexIfPresent(ctx, db, latestAPIKeyIPIndex)
+		return dropUnusableIndexIfPresent(ctx, db, latestAPIKeyIPIndex)
 	case usageLogsUpstreamModelMismatchIndexMigration:
-		return dropInvalidIndexIfPresent(ctx, db, usageLogsUpstreamModelMismatchIndex)
+		return dropUnusableIndexIfPresent(ctx, db, usageLogsUpstreamModelMismatchIndex)
 	case usageLogsEffectiveModelIndexesMigration:
 		for _, indexName := range []string{usageLogsEffectiveRequestedModelIndex, usageLogsEffectiveUpstreamModelIndex} {
-			if err := dropInvalidIndexIfPresent(ctx, db, indexName); err != nil {
+			if err := dropUnusableIndexIfPresent(ctx, db, indexName); err != nil {
+				return err
+			}
+		}
+		return nil
+	case modelCallTraceIndexesMigration:
+		for _, indexName := range modelCallTraceIndexNames {
+			if err := dropUnusableIndexIfPresent(ctx, db, indexName); err != nil {
 				return err
 			}
 		}
@@ -323,20 +339,20 @@ func preparePaymentOrdersOutTradeNoUniqueMigration(ctx context.Context, db migra
 		)
 	}
 
-	return dropInvalidIndexIfPresent(ctx, db, paymentOrdersOutTradeNoUniqueIndex)
+	return dropUnusableIndexIfPresent(ctx, db, paymentOrdersOutTradeNoUniqueIndex)
 }
 
-func dropInvalidIndexIfPresent(ctx context.Context, db migrationConnection, indexName string) error {
-	invalid, err := indexIsInvalid(ctx, db, indexName)
+func dropUnusableIndexIfPresent(ctx context.Context, db migrationConnection, indexName string) error {
+	unusable, err := indexNeedsRebuild(ctx, db, indexName)
 	if err != nil {
-		return fmt.Errorf("check invalid index %s: %w", indexName, err)
+		return fmt.Errorf("check unusable index %s: %w", indexName, err)
 	}
-	if !invalid {
+	if !unusable {
 		return nil
 	}
 
 	if _, err := db.ExecContext(ctx, fmt.Sprintf("DROP INDEX CONCURRENTLY IF EXISTS %s", indexName)); err != nil {
-		return fmt.Errorf("drop invalid index %s: %w", indexName, err)
+		return fmt.Errorf("drop unusable index %s: %w", indexName, err)
 	}
 	return nil
 }
@@ -373,8 +389,8 @@ func findDuplicatePaymentOrderOutTradeNos(ctx context.Context, db migrationConne
 	return duplicates, nil
 }
 
-func indexIsInvalid(ctx context.Context, db migrationConnection, indexName string) (bool, error) {
-	var invalid bool
+func indexNeedsRebuild(ctx context.Context, db migrationConnection, indexName string) (bool, error) {
+	var unusable bool
 	err := db.QueryRowContext(ctx, `
 		SELECT EXISTS (
 			SELECT 1
@@ -383,10 +399,10 @@ func indexIsInvalid(ctx context.Context, db migrationConnection, indexName strin
 			JOIN pg_index i ON i.indexrelid = idx.oid
 			WHERE ns.nspname = 'public'
 			  AND idx.relname = $1
-			  AND NOT i.indisvalid
+			  AND (NOT i.indisvalid OR NOT i.indisready)
 		)
-	`, indexName).Scan(&invalid)
-	return invalid, err
+	`, indexName).Scan(&unusable)
+	return unusable, err
 }
 
 func ensureAtlasBaselineAligned(ctx context.Context, db migrationConnection, fsys fs.FS) error {

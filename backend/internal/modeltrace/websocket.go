@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"sync"
 )
 
@@ -24,16 +25,19 @@ type WebSocketTurnTracer struct {
 // webSocketTraceTurn keeps bounded in-memory state until a terminal frame is
 // visible and the service has supplied the corresponding terminal metadata.
 type webSocketTraceTurn struct {
-	handle          TraceHandle
-	requestBytes    int64
-	responseBytes   int64
-	responseHash    hashAccumulator
-	responseFrames  []json.RawMessage
-	responseTooLong bool
-	responseInvalid bool
-	terminalSeen    bool
-	finish          *FinishInput
-	finalized       bool
+	handle           TraceHandle
+	requestBytes     int64
+	responseBytes    int64
+	responseHash     hashAccumulator
+	responseFrames   []json.RawMessage
+	responseStream   io.WriteCloser
+	responseStarted  bool
+	responseHasFrame bool
+	responseTooLong  bool
+	responseInvalid  bool
+	terminalSeen     bool
+	finish           *FinishInput
+	finalized        bool
 }
 
 // hashAccumulator isolates the streaming digest dependency from turn state.
@@ -80,20 +84,32 @@ func (t *WebSocketTurnTracer) Begin(ctx context.Context, turn int, request []byt
 	if err != nil || !handle.Enabled {
 		return
 	}
-	_ = t.recorder.RecordPayload(ctx, handle, PayloadInput{
-		Kind:          PayloadKindClientRequest,
-		ContentType:   "application/json",
-		Body:          append([]byte(nil), request...),
-		OriginalBytes: int64(len(request)),
-		SHA256:        hashPayload(request),
+	requestStream := startWebSocketPayloadStream(t.recorder, ctx, handle, PayloadInput{
+		Kind: PayloadKindClientRequest, ContentType: "application/json",
+	})
+	if requestStream == nil {
+		_ = t.recorder.RecordPayload(ctx, handle, PayloadInput{
+			Kind:          PayloadKindClientRequest,
+			ContentType:   "application/json",
+			Body:          append([]byte(nil), request...),
+			OriginalBytes: int64(len(request)),
+			SHA256:        hashPayload(request),
+		})
+	} else {
+		_, _ = requestStream.Write(request)
+		_ = requestStream.Close()
+	}
+	responseStream := startWebSocketPayloadStream(t.recorder, ctx, handle, PayloadInput{
+		Kind: PayloadKindClientResponse, ContentType: "application/json",
 	})
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.turns[turn] = &webSocketTraceTurn{
-		handle:       handle,
-		requestBytes: int64(len(request)),
-		responseHash: hashAccumulator{hash: sha256.New()},
+		handle:         handle,
+		requestBytes:   int64(len(request)),
+		responseHash:   hashAccumulator{hash: sha256.New()},
+		responseStream: responseStream,
 	}
 }
 
@@ -112,11 +128,14 @@ func (t *WebSocketTurnTracer) AppendClientFrame(ctx context.Context, turn int, f
 	}
 	state.responseBytes += int64(len(frame))
 	_, _ = state.responseHash.hash.Write(frame)
-	if !json.Valid(frame) {
+	valid := json.Valid(frame)
+	if !valid {
 		state.responseInvalid = true
+	} else if state.responseStream != nil && !state.responseInvalid {
+		appendWebSocketStreamFrame(state, frame)
 	} else if !state.responseTooLong && !state.responseInvalid {
 		storedBytes := websocketFramesStoredBytes(state.responseFrames, frame)
-		if storedBytes > t.captureLimit {
+		if t.captureLimit >= 0 && storedBytes > t.captureLimit {
 			state.responseTooLong = true
 			state.responseFrames = nil
 		} else {
@@ -176,10 +195,13 @@ func (t *WebSocketTurnTracer) Close(ctx context.Context) {
 // websocketFinalizedTurn is an immutable persistence snapshot prepared while
 // holding the tracer lock and written after the lock is released.
 type websocketFinalizedTurn struct {
-	handle   TraceHandle
-	payload  PayloadInput
-	finish   FinishInput
-	recorder Recorder
+	handle          TraceHandle
+	payload         PayloadInput
+	finish          FinishInput
+	recorder        Recorder
+	responseStream  io.WriteCloser
+	responseInvalid bool
+	responseStarted bool
 }
 
 // readyToFinalizeLocked returns a snapshot when the turn has result metadata
@@ -192,12 +214,18 @@ func (t *WebSocketTurnTracer) readyToFinalizeLocked(turn int, state *webSocketTr
 	finish := *state.finish
 	finish.RequestBytes = state.requestBytes
 	finish.ResponseBytes = state.responseBytes
-	payload := websocketResponsePayload(state, t.captureLimit)
+	payload := PayloadInput{}
+	if state.responseStream == nil {
+		payload = websocketResponsePayload(state, t.captureLimit)
+	}
 	finalized := &websocketFinalizedTurn{
-		handle:   state.handle,
-		payload:  payload,
-		finish:   finish,
-		recorder: t.recorder,
+		handle:          state.handle,
+		payload:         payload,
+		finish:          finish,
+		recorder:        t.recorder,
+		responseStream:  state.responseStream,
+		responseInvalid: state.responseInvalid,
+		responseStarted: state.responseStarted,
 	}
 	delete(t.turns, turn)
 	return finalized
@@ -208,8 +236,82 @@ func (t *WebSocketTurnTracer) persistFinalizedTurn(ctx context.Context, ready *w
 	if ready == nil || ready.recorder == nil || !ready.handle.Enabled {
 		return
 	}
-	_ = ready.recorder.RecordPayload(ctx, ready.handle, ready.payload)
+	if ready.responseStream == nil {
+		_ = ready.recorder.RecordPayload(ctx, ready.handle, ready.payload)
+	} else {
+		finishWebSocketPayloadStream(ready.responseStream, ready.responseInvalid, ready.responseStarted)
+	}
 	_ = ready.recorder.Finish(ctx, ready.handle, ready.finish)
+}
+
+// startWebSocketPayloadStream opens an optional per-turn body sink without
+// changing the response relay when a recorder cannot provide one.
+func startWebSocketPayloadStream(recorder Recorder, ctx context.Context, handle TraceHandle, input PayloadInput) io.WriteCloser {
+	streamingRecorder, ok := recorder.(PayloadStreamRecorder)
+	if !ok || streamingRecorder == nil {
+		return nil
+	}
+	return streamingRecorder.StartPayloadStream(ctx, handle, input)
+}
+
+// appendWebSocketStreamFrame writes the raw-chain envelope incrementally after
+// each valid client-visible frame, avoiding a growing frame slice in memory.
+func appendWebSocketStreamFrame(state *webSocketTraceTurn, frame []byte) {
+	if state == nil || state.responseStream == nil || state.responseInvalid {
+		return
+	}
+	if !state.responseStarted {
+		_, _ = state.responseStream.Write([]byte(`{"frames":[`))
+		state.responseStarted = true
+	}
+	if state.responseHasFrame {
+		_, _ = state.responseStream.Write([]byte(","))
+	}
+	_, _ = state.responseStream.Write(frame)
+	state.responseHasFrame = true
+}
+
+// finishWebSocketPayloadStream closes a valid JSON envelope or marks malformed
+// frame sequences unreadable before finalizing the independently stored chunks.
+func finishWebSocketPayloadStream(stream io.WriteCloser, invalid, started bool) {
+	if stream == nil {
+		return
+	}
+	if invalid {
+		setWebSocketPayloadCaptureStatus(stream, CaptureStatusNotApplicable)
+		setWebSocketPayloadMetadata(stream, PayloadKindClientResponse, "application/octet-stream")
+		_ = stream.Close()
+		return
+	}
+	if !started {
+		_, _ = stream.Write([]byte(`{"frames":[]}`))
+	} else {
+		_, _ = stream.Write([]byte(`]}`))
+	}
+	setWebSocketPayloadMetadata(stream, PayloadKindClientResponse, "application/json")
+	_ = stream.Close()
+}
+
+// setWebSocketPayloadMetadata applies terminal raw-chain labels only when the
+// stream exposes the optional metadata mutator used by the chunked recorder.
+func setWebSocketPayloadMetadata(stream io.WriteCloser, kind PayloadKind, contentType string) {
+	setter, ok := stream.(interface {
+		SetPayloadMetadata(PayloadKind, string)
+	})
+	if ok {
+		setter.SetPayloadMetadata(kind, contentType)
+	}
+}
+
+// setWebSocketPayloadCaptureStatus marks a stream non-readable after malformed
+// frame content without discarding the metadata required for trace analysis.
+func setWebSocketPayloadCaptureStatus(stream io.WriteCloser, status CaptureStatus) {
+	setter, ok := stream.(interface {
+		SetPayloadCaptureStatus(CaptureStatus)
+	})
+	if ok {
+		setter.SetPayloadCaptureStatus(status)
+	}
 }
 
 // websocketResponsePayload converts safely bounded JSON frames into one JSON
@@ -232,7 +334,7 @@ func websocketResponsePayload(state *webSocketTraceTurn, limit int) PayloadInput
 	body, err := json.Marshal(struct {
 		Frames []json.RawMessage `json:"frames"`
 	}{Frames: state.responseFrames})
-	if err != nil || len(body) > limit {
+	if err != nil || (limit >= 0 && len(body) > limit) {
 		payload.Truncated = true
 		return payload
 	}

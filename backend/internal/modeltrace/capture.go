@@ -10,8 +10,15 @@ import (
 	"strings"
 )
 
-// DefaultPayloadLimitBytes 是单个追踪正文默认允许持久化的最大字节数。
-const DefaultPayloadLimitBytes = 1 << 20
+const (
+	// DefaultPayloadLimitBytes preserves the former prefix threshold only for
+	// compatibility tests and explicit callers that deliberately request a cap.
+	// New gateway traces must use CompleteTextPayloadLimitBytes instead.
+	DefaultPayloadLimitBytes = 1 << 20
+	// CompleteTextPayloadLimitBytes disables prefix truncation for normal text;
+	// the administrator-selected retention policy is the storage bound.
+	CompleteTextPayloadLimitBytes = -1
+)
 
 // CaptureStatus 描述追踪正文能否安全、完整地保存。
 type CaptureStatus string
@@ -278,7 +285,7 @@ func redactJSONValue(value *any, key string) bool {
 func isSensitiveField(key string) bool {
 	normalized := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(key), "-", "_"), " ", "_"))
 	switch normalized {
-	case "authorization", "api_key", "apikey", "access_token", "refresh_token", "token", "secret", "password", "cookie", "set_cookie":
+	case "authorization", "api_key", "apikey", "x_api_key", "access_token", "refresh_token", "token", "secret", "password", "cookie", "set_cookie":
 		return true
 	default:
 		return false

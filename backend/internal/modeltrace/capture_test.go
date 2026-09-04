@@ -11,12 +11,12 @@ import (
 // TestSanitizeForStorageRedactsCredentialsAndMedia verifies that a persistence
 // regression cannot keep credential values or Base64 media in readable payloads.
 func TestSanitizeForStorageRedactsCredentialsAndMedia(t *testing.T) {
-	raw := []byte(`{"authorization":"Bearer trace-canary","nested":{"api_key":"key-canary"},"image":"data:image/png;base64,base64-canary"}`)
+	raw := []byte(`{"authorization":"Bearer trace-canary","nested":{"api_key":"key-canary","x-api-key":"x-key-canary"},"image":"data:image/png;base64,base64-canary"}`)
 
 	got := SanitizeForStorage("application/json", raw)
 
 	stored := string(got.Body)
-	for _, secret := range []string{"trace-canary", "key-canary", "base64-canary"} {
+	for _, secret := range []string{"trace-canary", "key-canary", "x-key-canary", "base64-canary"} {
 		if strings.Contains(stored, secret) {
 			t.Fatalf("sanitized payload leaked %q: %s", secret, stored)
 		}

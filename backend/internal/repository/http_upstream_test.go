@@ -2,6 +2,7 @@ package repository
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -11,17 +12,148 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/JnyRoad/RelayDeck/internal/config"
+	"github.com/JnyRoad/RelayDeck/internal/modeltrace"
 	"github.com/JnyRoad/RelayDeck/internal/pkg/tlsfingerprint"
 	"github.com/JnyRoad/RelayDeck/internal/pkg/xai"
 	"github.com/JnyRoad/RelayDeck/internal/service"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
+
+// upstreamAttemptRecorderStub records the context-bound observer events while
+// keeping transport tests independent from PostgreSQL and encryption.
+type upstreamAttemptRecorderStub struct {
+	mu         sync.Mutex
+	attempts   []modeltrace.UpstreamAttemptInput
+	payloads   []modeltrace.PayloadInput
+	finishes   []modeltrace.UpstreamAttemptFinishInput
+	payloadErr error
+}
+
+// Start supplies an enabled root trace so a test observer may allocate attempts.
+func (*upstreamAttemptRecorderStub) Start(context.Context, modeltrace.StartInput) (modeltrace.TraceHandle, error) {
+	return modeltrace.TraceHandle{TraceID: "trace-upstream", Enabled: true, PayloadCaptureEnabled: true}, nil
+}
+
+// RecordPayload captures one sanitized payload input and can fail harmlessly.
+func (s *upstreamAttemptRecorderStub) RecordPayload(_ context.Context, _ modeltrace.TraceHandle, input modeltrace.PayloadInput) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.payloads = append(s.payloads, input)
+	return s.payloadErr
+}
+
+// Finish is unused by the shared HTTP observer because root completion belongs
+// to the gateway middleware.
+func (*upstreamAttemptRecorderStub) Finish(context.Context, modeltrace.TraceHandle, modeltrace.FinishInput) error {
+	return nil
+}
+
+// StartUpstreamAttempt records the actual transport occurrence number.
+func (s *upstreamAttemptRecorderStub) StartUpstreamAttempt(_ context.Context, _ modeltrace.TraceHandle, input modeltrace.UpstreamAttemptInput) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.attempts = append(s.attempts, input)
+	return nil
+}
+
+// FinishUpstreamAttempt records the response terminal state without body data.
+func (s *upstreamAttemptRecorderStub) FinishUpstreamAttempt(_ context.Context, _ modeltrace.TraceHandle, input modeltrace.UpstreamAttemptFinishInput) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.finishes = append(s.finishes, input)
+	return nil
+}
+
+// TestHTTPUpstreamDoCapturesIndependentAttemptBodies verifies that each Do
+// dispatch on one observer receives its own ordered request and response data.
+func TestHTTPUpstreamDoCapturesIndependentAttemptBodies(t *testing.T) {
+	var calls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"error":"retry"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"response-final"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	recorder := &upstreamAttemptRecorderStub{}
+	observer := modeltrace.NewUpstreamAttemptObserver(recorder, modeltrace.TraceHandle{
+		TraceID: "trace-upstream", Enabled: true, PayloadCaptureEnabled: true,
+	})
+	upstream := NewHTTPUpstream(nil)
+	for _, body := range []string{`{"model":"retry-model","input":"first"}`, `{"model":"retry-model","input":"second"}`} {
+		ctx := modeltrace.WithUpstreamAttemptObserver(t.Context(), observer)
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/responses?access_token=must-not-store", strings.NewReader(body))
+		require.NoError(t, err)
+		request.Header.Set("Content-Type", "application/json")
+		response, err := upstream.Do(request, "", 41, 1)
+		require.NoError(t, err)
+		_, err = io.ReadAll(response.Body)
+		require.NoError(t, err)
+		require.NoError(t, response.Body.Close())
+	}
+
+	require.Eventually(t, func() bool {
+		recorder.mu.Lock()
+		defer recorder.mu.Unlock()
+		return len(recorder.attempts) == 2 && len(recorder.payloads) == 4 && len(recorder.finishes) == 2
+	}, time.Second, 10*time.Millisecond)
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	require.Len(t, recorder.attempts, 2)
+	require.Equal(t, 1, recorder.attempts[0].AttemptNo)
+	require.Equal(t, 2, recorder.attempts[1].AttemptNo)
+	require.Equal(t, "account#41", recorder.attempts[0].AccountSnapshot)
+	require.NotContains(t, recorder.attempts[0].UpstreamRoute, "access_token")
+	require.Len(t, recorder.payloads, 4)
+	require.Equal(t, modeltrace.PayloadKindUpstreamRequest, recorder.payloads[0].Kind)
+	require.Equal(t, 1, recorder.payloads[0].AttemptNo)
+	require.Equal(t, modeltrace.PayloadKindUpstreamError, recorder.payloads[1].Kind)
+	require.Equal(t, 1, recorder.payloads[1].AttemptNo)
+	require.Equal(t, modeltrace.PayloadKindUpstreamRequest, recorder.payloads[2].Kind)
+	require.Equal(t, 2, recorder.payloads[2].AttemptNo)
+	require.Equal(t, modeltrace.PayloadKindUpstreamResponse, recorder.payloads[3].Kind)
+	require.Equal(t, 2, recorder.payloads[3].AttemptNo)
+	require.Len(t, recorder.finishes, 2)
+	require.Equal(t, modeltrace.OutcomeFailed, recorder.finishes[0].Outcome)
+	require.Equal(t, modeltrace.OutcomeSucceeded, recorder.finishes[1].Outcome)
+}
+
+// TestHTTPUpstreamDoPreservesResponseWhenAttemptObserverFails verifies that a
+// failed trace payload write cannot alter the upstream response seen by caller.
+func TestHTTPUpstreamDoPreservesResponseWhenAttemptObserverFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(server.Close)
+
+	recorder := &upstreamAttemptRecorderStub{payloadErr: errors.New("trace storage unavailable")}
+	observer := modeltrace.NewUpstreamAttemptObserver(recorder, modeltrace.TraceHandle{
+		TraceID: "trace-upstream", Enabled: true, PayloadCaptureEnabled: true,
+	})
+	request, err := http.NewRequestWithContext(modeltrace.WithUpstreamAttemptObserver(t.Context(), observer), http.MethodPost, server.URL, strings.NewReader(`{"input":"hello"}`))
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/json")
+
+	response, err := NewHTTPUpstream(nil).Do(request, "", 7, 1)
+	require.NoError(t, err)
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	require.JSONEq(t, `{"ok":true}`, string(body))
+}
 
 func TestHTTPUpstreamDoCanDisableRedirectsPerRequest(t *testing.T) {
 	var redirectedCalls atomic.Int64

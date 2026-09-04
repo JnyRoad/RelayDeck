@@ -17,7 +17,7 @@ const (
 	// DefaultRetentionDays 是首次启用模型调用追踪时采用的默认保留期。
 	DefaultRetentionDays = 7
 	// maxRetentionDays 限制可通过管理端配置的最长正文保留时间。
-	maxRetentionDays = 90
+	maxRetentionDays = 365
 	// traceConfigCacheTTL 控制热路径重新读取系统设置的最短间隔。
 	traceConfigCacheTTL = 10 * time.Second
 )
@@ -125,7 +125,7 @@ func ParseTraceConfig(raw string) (TraceConfig, error) {
 	return config, nil
 }
 
-// ValidateTraceConfig 将正文存储保留期限制在产品确认的 1 至 90 天范围内。
+// ValidateTraceConfig 将正文存储保留期限制在产品确认的 1 至 365 天范围内。
 func ValidateTraceConfig(config TraceConfig) error {
 	if config.RetentionDays < 1 || config.RetentionDays > maxRetentionDays {
 		return fmt.Errorf("model trace retention days must be between 1 and %d", maxRetentionDays)

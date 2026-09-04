@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,11 +16,15 @@ import (
 
 // modelTraceQueryRepositoryStub 为管理端处理器提供不含数据库 I/O 的追踪查询结果。
 type modelTraceQueryRepositoryStub struct {
-	items   []modeltrace.TraceSummary
-	total   int64
-	detail  modeltrace.TraceDetail
-	payload modeltrace.TracePayload
-	filter  modeltrace.TraceFilter
+	items        []modeltrace.TraceSummary
+	total        int64
+	detail       modeltrace.TraceDetail
+	conversation modeltrace.TraceConversation
+	payload      modeltrace.TracePayload
+	filter       modeltrace.TraceFilter
+	pageRequest  modeltrace.ConversationPageRequest
+	chunkNo      int
+	maxBytes     int
 }
 
 // ListTraces 记录处理器解析后的筛选条件并返回预置索引。
@@ -36,6 +41,26 @@ func (s *modelTraceQueryRepositoryStub) GetTrace(context.Context, string) (model
 // GetPayload returns the test-selected payload without database I/O.
 func (s *modelTraceQueryRepositoryStub) GetPayload(context.Context, string, modeltrace.PayloadKind, int) (modeltrace.TracePayload, error) {
 	return s.payload, nil
+}
+
+// GetPayloadPage records the selected raw-body continuation while preserving
+// the original test payload's encrypted content for query-service decryption.
+func (s *modelTraceQueryRepositoryStub) GetPayloadPage(_ context.Context, _ string, _ modeltrace.PayloadKind, _ int, chunkNo, maxBytes int) (modeltrace.TracePayloadPage, error) {
+	s.chunkNo = chunkNo
+	s.maxBytes = maxBytes
+	return modeltrace.TracePayloadPage{Payload: s.payload, Ciphertexts: []string{s.payload.Ciphertext}}, nil
+}
+
+// GetConversation returns the test-provided explicit replay index without I/O.
+func (s *modelTraceQueryRepositoryStub) GetConversation(context.Context, string) (modeltrace.TraceConversation, error) {
+	return s.conversation, nil
+}
+
+// GetConversationPage records the handler's parsed pagination request while
+// returning the prebuilt metadata-only replay for HTTP contract tests.
+func (s *modelTraceQueryRepositoryStub) GetConversationPage(_ context.Context, _ string, page modeltrace.ConversationPageRequest) (modeltrace.TraceConversation, error) {
+	s.pageRequest = page
+	return s.conversation, nil
 }
 
 // modelTraceDecryptorStub 仅返回测试期望的安全正文。
@@ -117,6 +142,104 @@ func TestModelTraceHandlerListReturnsIndexes(t *testing.T) {
 	}
 }
 
+// TestModelTraceHandlerListParsesHistoricalAttributionFilters verifies that
+// administrators can search call-time identity snapshots and explicit session
+// fields without asking the list endpoint to load a trace body.
+func TestModelTraceHandlerListParsesHistoricalAttributionFilters(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repository := &modelTraceQueryRepositoryStub{}
+	handler := newModelTraceHandlerForTest(repository)
+	router := gin.New()
+	router.GET("/admin/model-traces", handler.List)
+
+	request := httptest.NewRequest(http.MethodGet, "/admin/model-traces?user=dingrui%40szyuto.com&api_key=dingrui-key&session_id=conversation-42&upstream_model=gpt-5.6-terra", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("list response status=%d body=%s", response.Code, response.Body.String())
+	}
+	filter := repository.filter
+	if filter.User != "dingrui@szyuto.com" || filter.APIKey != "dingrui-key" || filter.SessionID != "conversation-42" || filter.UpstreamModel != "gpt-5.6-terra" {
+		t.Fatalf("parsed historical attribution filter=%#v", filter)
+	}
+}
+
+// TestModelTraceHandlerConversationReturnsMetadataOnly verifies that the
+// conversation endpoint serves only explicit turn indexes; individual bodies
+// remain behind the selected-payload endpoint.
+func TestModelTraceHandlerConversationReturnsMetadataOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repository := &modelTraceQueryRepositoryStub{conversation: modeltrace.TraceConversation{
+		CurrentTraceID: "trace-middle",
+		Linked:         true,
+		LinkSource:     "session_id",
+		Turns: []modeltrace.TraceDetail{{
+			Trace:    modeltrace.TraceSummary{TraceID: "trace-middle", SessionID: "conversation-42"},
+			Payloads: []modeltrace.TracePayload{{Kind: modeltrace.PayloadKindClientRequest, CaptureStatus: modeltrace.CaptureStatusRedacted, Ciphertext: "must-not-leak"}},
+		}},
+	}}
+	handler := newModelTraceHandlerForTest(repository)
+	router := gin.New()
+	router.GET("/admin/model-traces/:traceID/conversation", handler.Conversation)
+
+	request := httptest.NewRequest(http.MethodGet, "/admin/model-traces/trace-middle/conversation", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "trace-middle") || strings.Contains(response.Body.String(), "must-not-leak") {
+		t.Fatalf("conversation response status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+// TestModelTraceHandlerConversationParsesReplayCursor verifies that the
+// administrator API forwards a bounded direction and opaque cursor rather than
+// asking a repository to infer or load a complete conversation.
+func TestModelTraceHandlerConversationParsesReplayCursor(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repository := &modelTraceQueryRepositoryStub{conversation: modeltrace.TraceConversation{CurrentTraceID: "trace-current", Turns: []modeltrace.TraceDetail{}}}
+	handler := newModelTraceHandlerForTest(repository)
+	router := gin.New()
+	router.GET("/admin/model-traces/:traceID/conversation", handler.Conversation)
+
+	cursor := base64.RawURLEncoding.EncodeToString([]byte(`{"created_at":"2026-09-03T12:00:00Z","trace_id":"trace-previous"}`))
+	request := httptest.NewRequest(http.MethodGet, "/admin/model-traces/trace-current/conversation?direction=older&cursor="+cursor+"&limit=500", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("conversation response status=%d body=%s", response.Code, response.Body.String())
+	}
+	if repository.pageRequest.Direction != "older" || repository.pageRequest.Cursor != cursor || repository.pageRequest.Limit != 50 {
+		t.Fatalf("page request=%#v", repository.pageRequest)
+	}
+}
+
+// TestModelTraceHandlerConversationRejectsMalformedReplayPages ensures cursor
+// validation failures remain client errors instead of becoming unknown 500s.
+func TestModelTraceHandlerConversationRejectsMalformedReplayPages(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, rawQuery := range []string{
+		"direction=sideways&cursor=opaque",
+		"direction=older",
+		"cursor=opaque",
+		"direction=older&cursor=opaque",
+	} {
+		repository := &modelTraceQueryRepositoryStub{}
+		handler := newModelTraceHandlerForTest(repository)
+		router := gin.New()
+		router.GET("/admin/model-traces/:traceID/conversation", handler.Conversation)
+
+		request := httptest.NewRequest(http.MethodGet, "/admin/model-traces/trace-current/conversation?"+rawQuery, nil)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("query %q response status=%d body=%s, want 400", rawQuery, response.Code, response.Body.String())
+		}
+	}
+}
+
 // TestModelTraceHandlerReadsOnlySelectedPayload verifies that detail returns
 // metadata while the selected payload endpoint alone can decrypt safe content.
 func TestModelTraceHandlerReadsOnlySelectedPayload(t *testing.T) {
@@ -145,6 +268,84 @@ func TestModelTraceHandlerReadsOnlySelectedPayload(t *testing.T) {
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "[REDACTED]") || strings.Contains(response.Body.String(), "ciphertext-canary") {
 		t.Fatalf("payload response status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+// TestModelTraceHandlerPayloadParsesChunkCursor verifies that a raw payload
+// continuation reaches the bounded page service rather than re-reading page 0.
+func TestModelTraceHandlerPayloadParsesChunkCursor(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repository := &modelTraceQueryRepositoryStub{payload: modeltrace.TracePayload{
+		Kind: modeltrace.PayloadKindClientResponse, CaptureStatus: modeltrace.CaptureStatusRedacted, Ciphertext: "encrypted",
+	}}
+	handler := newModelTraceHandlerForTest(repository)
+	router := gin.New()
+	router.GET("/admin/model-traces/:traceID/payloads/:kind", handler.Payload)
+
+	request := httptest.NewRequest(http.MethodGet, "/admin/model-traces/trace-body/payloads/client_response?chunk_no=4", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("payload response status=%d body=%s", response.Code, response.Body.String())
+	}
+	if repository.chunkNo != 4 || repository.maxBytes != 1024*1024 {
+		t.Fatalf("payload request chunk=%d max=%d", repository.chunkNo, repository.maxBytes)
+	}
+}
+
+// TestModelTraceHandlerReadsSelectedUpstreamPayload verifies that a raw-chain
+// reader may decrypt only its chosen upstream error for the correct retry.
+func TestModelTraceHandlerReadsSelectedUpstreamPayload(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repository := &modelTraceQueryRepositoryStub{payload: modeltrace.TracePayload{
+		Kind:          modeltrace.PayloadKindUpstreamError,
+		AttemptNo:     2,
+		CaptureStatus: modeltrace.CaptureStatusRedacted,
+		Ciphertext:    "upstream-error-ciphertext",
+	}}
+	handler := newModelTraceHandlerForTest(repository)
+	router := gin.New()
+	router.GET("/admin/model-traces/:traceID/payloads/:kind", handler.Payload)
+
+	request := httptest.NewRequest(http.MethodGet, "/admin/model-traces/trace-retry/payloads/upstream_error?attempt_no=2", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "[REDACTED]") || strings.Contains(response.Body.String(), "upstream-error-ciphertext") {
+		t.Fatalf("upstream payload response status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+// TestModelTraceHandlerRecordsCopyOnlyForExistingPayload verifies that the
+// browser can create a content-free copy audit event only after it selects an
+// existing payload metadata record. The endpoint never returns body content.
+func TestModelTraceHandlerRecordsCopyOnlyForExistingPayload(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repository := &modelTraceQueryRepositoryStub{detail: modeltrace.TraceDetail{
+		Trace: modeltrace.TraceSummary{TraceID: "trace-copy"},
+		Payloads: []modeltrace.TracePayload{{
+			Kind:      modeltrace.PayloadKindClientRequest,
+			AttemptNo: 0,
+		}},
+	}}
+	handler := newModelTraceHandlerForTest(repository)
+	router := gin.New()
+	router.POST("/admin/model-traces/:traceID/access-events", handler.RecordAccessEvent)
+
+	request := httptest.NewRequest(http.MethodPost, "/admin/model-traces/trace-copy/access-events", strings.NewReader(`{"action":"copy","kind":"client_request","attempt_no":0}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "ciphertext") || strings.Contains(response.Body.String(), "prompt") {
+		t.Fatalf("copy event response status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	missing := httptest.NewRequest(http.MethodPost, "/admin/model-traces/trace-copy/access-events", strings.NewReader(`{"action":"copy","kind":"client_response","attempt_no":0}`))
+	missing.Header.Set("Content-Type", "application/json")
+	missingResponse := httptest.NewRecorder()
+	router.ServeHTTP(missingResponse, missing)
+	if missingResponse.Code != http.StatusBadRequest {
+		t.Fatalf("missing payload copy status=%d body=%s", missingResponse.Code, missingResponse.Body.String())
 	}
 }
 
