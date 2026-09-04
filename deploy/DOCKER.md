@@ -73,21 +73,35 @@ example. Do not commit that secret.
 `POSTGRES_DB` only initializes an empty PostgreSQL data volume; changing it does
 not rename an existing database or login role. Before changing the application
 database name, take a recoverable backup and use a PostgreSQL administrative
-session during a maintenance window to migrate both the retained database and
-its application login role to `relaydeck`. Replace the placeholders below with
-the current database and administrative roles:
+session during a maintenance window. Stop the application first, then connect
+to a database other than the application database with an administrator role
+that is not the application login. Replace the example identifiers below before
+executing the SQL:
 
 ```bash
 docker compose stop relaydeck
-docker compose exec db pg_dump -U <existing-db-role> -Fc <existing-database> > existing-database.backup
-docker compose exec db createdb -U <existing-admin-role> -O relaydeck relaydeck
-docker compose exec -T db pg_restore -U relaydeck -d relaydeck --clean --if-exists < existing-database.backup
 ```
 
-After validating the restored data and renamed login role, set the application
+```sql
+ALTER ROLE existing_app_role RENAME TO relaydeck;
+ALTER DATABASE existing_database RENAME TO relaydeck;
+```
+
+The role rename preserves its role identifier, ownership, and grants; the
+database rename preserves its data. Do not treat `pg_dump`/`pg_restore` as a
+role migration: if a direct rename is unsuitable for your deployment, have a
+database administrator perform a separate, tested migration that recreates the
+required roles and grants.
+
+After validating the renamed database and login role, set the application
 `DATABASE_DBNAME` (and the Compose `POSTGRES_DB` value for future empty-volume
-initialization) to `relaydeck`, then start the application again with `docker
-compose up -d relaydeck`. This repository provides no automatic data migration.
+initialization) to `relaydeck`, then start the application again with:
+
+```bash
+docker compose up -d relaydeck
+```
+
+This repository provides no automatic data migration.
 
 ## Startup and Database Recovery
 
