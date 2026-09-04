@@ -98,6 +98,7 @@ type openAIWSProxyClientEntry struct {
 	lastUsedUnixNano int64
 }
 
+// Dial 建立 OpenAI 上游 WebSocket 连接，保留代理语义并收集失败握手的有限诊断信息。
 func (d *coderOpenAIWSClientDialer) Dial(
 	ctx context.Context,
 	wsURL string,
@@ -181,7 +182,52 @@ func (t openAIWSCodexHandshakeTransport) RoundTrip(req *http.Request) (*http.Res
 	cloned := req.Clone(req.Context())
 	cloned.Header = cloneHeader(req.Header)
 	cloned.Header.Set("Sec-WebSocket-Extensions", openAIWSCodexDeflateExtension)
-	return base.RoundTrip(cloned)
+	resp, err := base.RoundTrip(cloned)
+	if err != nil {
+		return resp, err
+	}
+	normalizeOpenAIWSCodexDeflateResponse(resp)
+	return resp, nil
+}
+
+// normalizeOpenAIWSCodexDeflateResponse 仅消除与当前 flate 实现等价的 15 位窗口选择。
+// 其他窗口值保留给底层库拒绝，避免在无法编码相同窗口大小时继续使用该连接。
+func normalizeOpenAIWSCodexDeflateResponse(resp *http.Response) {
+	if resp == nil || resp.Header == nil {
+		return
+	}
+	for name, values := range resp.Header {
+		if !strings.EqualFold(name, "Sec-WebSocket-Extensions") {
+			continue
+		}
+		for index, value := range values {
+			values[index] = stripOpenAIWSClientMaxWindowBits15(value)
+		}
+	}
+}
+
+// stripOpenAIWSClientMaxWindowBits15 移除服务端对 15 位客户端窗口的显式选择。
+// Go flate 的可用编码窗口正是 15 位；较小窗口必须保持原样并由握手校验拒绝。
+func stripOpenAIWSClientMaxWindowBits15(extension string) string {
+	parts := strings.Split(extension, ";")
+	if len(parts) < 2 || !strings.EqualFold(strings.TrimSpace(parts[0]), "permessage-deflate") {
+		return extension
+	}
+	kept := make([]string, 0, len(parts))
+	kept = append(kept, strings.TrimSpace(parts[0]))
+	removed := false
+	for _, part := range parts[1:] {
+		name, value, hasValue := strings.Cut(part, "=")
+		if hasValue && strings.EqualFold(strings.TrimSpace(name), "client_max_window_bits") && strings.TrimSpace(value) == "15" {
+			removed = true
+			continue
+		}
+		kept = append(kept, strings.TrimSpace(part))
+	}
+	if !removed {
+		return extension
+	}
+	return strings.Join(kept, "; ")
 }
 
 func (d *coderOpenAIWSClientDialer) proxyHTTPClient(proxy string) (*http.Client, error) {
