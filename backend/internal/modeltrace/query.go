@@ -359,7 +359,7 @@ func (s *QueryService) decryptPayloadPage(page TracePayloadPage) (TracePayload, 
 			payload.ContentStatus = "unavailable"
 			return payload, nil
 		}
-		content.WriteString(plaintext)
+		_, _ = content.WriteString(plaintext)
 	}
 	payload.Ciphertext = ""
 	payload.Content = content.String()
