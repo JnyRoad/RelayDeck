@@ -40,10 +40,29 @@ func (s *adminServiceImpl) ListOpenAISchedulableAccountsForSchedulerScore(ctx co
 	if s == nil || s.accountRepo == nil {
 		return nil, nil
 	}
+	var (
+		accounts []Account
+		err      error
+	)
 	if groupID != nil {
-		return s.accountRepo.ListSchedulableByGroupIDAndPlatform(ctx, *groupID, PlatformOpenAI)
+		accounts, err = s.accountRepo.ListSchedulableByGroupIDAndPlatform(ctx, *groupID, PlatformOpenAI)
+	} else {
+		accounts, err = s.accountRepo.ListSchedulableUngroupedByPlatform(ctx, PlatformOpenAI)
 	}
-	return s.accountRepo.ListSchedulableUngroupedByPlatform(ctx, PlatformOpenAI)
+	if err != nil {
+		return nil, err
+	}
+	return filterLegacyCodexAppServerAccounts(accounts), nil
+}
+
+func filterLegacyCodexAppServerAccounts(accounts []Account) []Account {
+	filtered := make([]Account, 0, len(accounts))
+	for _, account := range accounts {
+		if !account.HasLegacyCodexAppServerCredentials() {
+			filtered = append(filtered, account)
+		}
+	}
+	return filtered
 }
 
 func (s *adminServiceImpl) GetAccount(ctx context.Context, id int64) (*Account, error) {
@@ -407,10 +426,6 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 	delete(accountExtra, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(accountExtra, OllamaCloudUsageSnapshotExtraKey)
 	accountExtra = prepareCodexFingerprintExtraForCreate(input.Platform, input.Type, accountExtra)
-	schedulable := true
-	if input.Schedulable != nil {
-		schedulable = *input.Schedulable
-	}
 	account := &Account{
 		Name:        input.Name,
 		Notes:       normalizeAccountNotes(input.Notes),
@@ -422,7 +437,7 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 		Concurrency: normalizeAccountConcurrency(input.Platform, input.Type, input.Concurrency),
 		Priority:    input.Priority,
 		Status:      StatusActive,
-		Schedulable: schedulable,
+		Schedulable: true,
 	}
 	if input.ProbeEnabled != nil && *input.ProbeEnabled {
 		if !isUpstreamBillingProbeAccount(account) {
@@ -526,7 +541,7 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 
 	// OAuth 账号：创建后异步设置隐私。
 	// 使用 Ensure（幂等）而非 Force：新建账号 Extra 为空时效果相同，但更安全。
-	if account.Type == AccountTypeOAuth && !account.IsCodexAppServerManaged() {
+	if account.Type == AccountTypeOAuth {
 		switch account.Platform {
 		case PlatformOpenAI:
 			go func() {
@@ -956,6 +971,13 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 			targetsByID[account.ID] = account
 		}
 	}
+	if input.Schedulable != nil && *input.Schedulable {
+		for _, account := range cachedTargets {
+			if account != nil && account.HasLegacyCodexAppServerCredentials() {
+				return nil, legacyCodexAppServerSchedulingError(account.ID)
+			}
+		}
+	}
 	if openAISettings.any() {
 		inheritedCount, err := validateBulkOpenAISettingsTargets(input, openAISettings, targetsByID)
 		if err != nil {
@@ -971,13 +993,6 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 			}
 			if !isUpstreamBillingProbeAccount(account) {
 				return nil, ErrUpstreamBillingProbeAccountInvalid
-			}
-		}
-	}
-	if input.Schedulable != nil && *input.Schedulable {
-		for _, account := range cachedTargets {
-			if account != nil && account.IsCodexAppServerManaged() {
-				return nil, infraerrors.New(http.StatusBadRequest, "CODEX_APP_SERVER_SCHEDULING_FORBIDDEN", "官方 app-server 管理资料不能加入旧 API 调度链路")
 			}
 		}
 	}
@@ -1282,6 +1297,15 @@ func (s *adminServiceImpl) SetAccountError(ctx context.Context, id int64, errorM
 }
 
 func (s *adminServiceImpl) SetAccountSchedulable(ctx context.Context, id int64, schedulable bool) (*Account, error) {
+	if schedulable {
+		account, err := s.accountRepo.GetByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if account.HasLegacyCodexAppServerCredentials() {
+			return nil, legacyCodexAppServerSchedulingError(id)
+		}
+	}
 	if err := s.accountRepo.SetSchedulable(ctx, id, schedulable); err != nil {
 		return nil, err
 	}
@@ -1290,6 +1314,15 @@ func (s *adminServiceImpl) SetAccountSchedulable(ctx context.Context, id int64, 
 		return nil, err
 	}
 	return updated, nil
+}
+
+func legacyCodexAppServerSchedulingError(accountID int64) error {
+	return infraerrors.Newf(
+		http.StatusConflict,
+		"LEGACY_CODEX_APP_SERVER_NOT_SCHEDULABLE",
+		"account %d has legacy Codex app-server credentials and must be migrated before scheduling",
+		accountID,
+	)
 }
 
 func (s *adminServiceImpl) RevertAccountProxyFallback(ctx context.Context, id int64) error {

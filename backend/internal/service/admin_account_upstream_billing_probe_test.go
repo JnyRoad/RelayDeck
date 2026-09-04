@@ -688,26 +688,6 @@ func TestBulkUpdateAccountsRejectsProbeSettingForIneligibleTargetBeforeWrite(t *
 	}
 }
 
-func TestBulkUpdateAccountsRejectsSchedulingManagedAppServerProfile(t *testing.T) {
-	schedulable := true
-	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
-		1: {
-			ID:          1,
-			Platform:    PlatformOpenAI,
-			Type:        AccountTypeOAuth,
-			Credentials: map[string]any{"auth_provider": "codex_app_server"},
-		},
-	}}
-
-	_, err := (&adminServiceImpl{accountRepo: repo}).BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
-		AccountIDs:  []int64{1},
-		Schedulable: &schedulable,
-	})
-
-	require.Error(t, err)
-	require.Empty(t, repo.bulkUpdates)
-}
-
 func TestBulkUpdateAccountsRejectsProbeSettingWhenTargetIsMissing(t *testing.T) {
 	enabled := true
 	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{

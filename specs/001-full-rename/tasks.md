@@ -17,7 +17,8 @@ validation covers backend, frontend, and the scoped source scan.
 - [X] T001 Inventory case-varied former-name occurrences in tracked code and
   configuration files under `backend/`, `frontend/`, `deploy/`, `.github/`,
   `skills/`, root Dockerfiles, Makefiles, manifests, and ignore files.
-- [X] T002 Record the canonical mapping and excluded historical/legal content in
+- [X] T002 Record the canonical mapping and full-repository documentation,
+  legal, and historical scope in
   `specs/001-full-rename/{spec.md,plan.md,research.md,data-model.md,contracts/breaking-identity-contract.md,quickstart.md}`.
 
 ---
@@ -113,6 +114,10 @@ RelayDeck-only.
 - [X] T018 Run `git diff --check`, confirm changed legacy-named paths are gone,
   and document any unverified Docker registry or DNS state in
   `specs/001-full-rename/quickstart.md`.
+- [ ] T019 After T013 and T017, rewrite the remaining documentation, legal,
+  historical, and fixture references under the user-authorized full-repository
+  scope; neutralize third-party brands and referral codes without inventing
+  replacements; then run a zero-legacy-token scan.
 
 ## Dependencies & Execution Order
 

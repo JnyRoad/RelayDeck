@@ -456,63 +456,6 @@ export async function exchangeCode(
   return data
 }
 
-// App-server managed login is intentionally separate from the legacy OAuth
-// helpers above. It only returns user-action state; access and refresh tokens
-// never cross the browser or RelayDeck API boundary.
-export type CodexAppServerLoginMode = 'browser' | 'device_code'
-export type CodexAppServerLoginStatus = 'pending' | 'completed' | 'failed' | 'cancelled'
-
-export interface CodexAppServerLogin {
-  session_id: string
-  login_id: string
-  mode: CodexAppServerLoginMode
-  status: CodexAppServerLoginStatus
-  authorization_url?: string
-  verification_url?: string
-  user_code?: string
-  error?: string
-}
-
-export async function startCodexAppServerLogin(
-  mode: CodexAppServerLoginMode = 'device_code'
-): Promise<CodexAppServerLogin> {
-  const { data } = await apiClient.post<CodexAppServerLogin>(
-    '/admin/openai/app-server/login/start',
-    { mode },
-    { timeout: 90_000 }
-  )
-  return data
-}
-
-export async function getCodexAppServerLogin(sessionID: string): Promise<CodexAppServerLogin> {
-  const { data } = await apiClient.get<CodexAppServerLogin>(`/admin/openai/app-server/login/${encodeURIComponent(sessionID)}`)
-  return data
-}
-
-export async function cancelCodexAppServerLogin(sessionID: string): Promise<{ status: string }> {
-  const { data } = await apiClient.post<{ status: string }>(
-    `/admin/openai/app-server/login/${encodeURIComponent(sessionID)}/cancel`
-  )
-  return data
-}
-
-export interface CreateCodexAppServerAccountRequest {
-  name: string
-  notes?: string
-  priority: number
-}
-
-export async function createCodexAppServerAccount(
-  sessionID: string,
-  account: CreateCodexAppServerAccountRequest
-): Promise<Account> {
-  const { data } = await apiClient.post<Account>(
-    `/admin/openai/app-server/login/${encodeURIComponent(sessionID)}/create-account`,
-    account
-  )
-  return data
-}
-
 /**
  * Batch create accounts
  * @param accounts - Array of account data
@@ -1133,10 +1076,6 @@ export const accountsAPI = {
   syncUpstreamModelsPreview,
   generateAuthUrl,
   exchangeCode,
-  startCodexAppServerLogin,
-  getCodexAppServerLogin,
-  cancelCodexAppServerLogin,
-  createCodexAppServerAccount,
   refreshOpenAIToken,
   batchCreate,
   batchUpdateCredentials,

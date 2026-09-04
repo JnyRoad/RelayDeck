@@ -826,7 +826,7 @@ database:
   port: 5432
   # Database username
   # 数据库用户名
-  user: "postgres"
+  user: "relaydeck"
   # Database password
   # 数据库密码
   password: "your_secure_password_here"

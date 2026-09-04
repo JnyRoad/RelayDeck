@@ -1071,23 +1071,6 @@ export default {
             OPENAI_OAUTH_PROXY_REQUIRED:
               'No proxy is configured and this server could not reach OpenAI directly, so the OpenAI OAuth request failed. Select a proxy that can access OpenAI and retry; if the authorization code has expired, regenerate the authorization URL.'
           },
-          appServer: {
-            methodLabel: 'ChatGPT authorization method',
-            legacyTitle: 'Existing OAuth flow',
-            legacyDescription: 'Keep the existing browser callback and token-management flow.',
-            managedTitle: 'Official app-server managed login',
-            managedDescription: 'The official runtime completes device-code login without exchanging or storing subscription tokens.',
-            isolatedHint: 'This profile is for the official app-server runtime only. It is excluded from the existing API scheduler, groups, and HTTP forwarding path.',
-            title: 'Official app-server managed login',
-            description: 'Complete device-code verification in this browser. The official runtime automatically notifies this page after authentication.',
-            startDeviceCode: 'Generate device code',
-            deviceCodeInstructions: 'Open the official verification URL below and enter the device code to complete sign-in.',
-            waiting: 'Waiting for confirmation from the official runtime…',
-            refresh: 'Check now',
-            completed: 'Authentication is complete. You can now create the official runtime profile.',
-            createAccount: 'Create official runtime profile',
-            failed: 'Official app-server login failed'
-          },
           // Refresh Token auth
           refreshTokenAuth: 'Manual RT Input',
           refreshTokenDesc: 'Enter your existing OpenAI Refresh Token(s). Supports batch input (one per line). The system will automatically validate and create accounts.',

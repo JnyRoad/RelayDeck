@@ -38,10 +38,6 @@ services:
     volumes:
       # Local directory mapping for easy migration
       - ./data:/app/data:Z
-      # Optional host Codex app-server bridge token. The default /dev/null
-      # keeps existing deployments unchanged until the bridge installer writes
-      # CODEX_APP_SERVER_REMOTE_URL and a token-file source into .env.
-      - ${CODEX_APP_SERVER_REMOTE_TOKEN_FILE_HOST:-/dev/null}:/run/relaydeck/codex-app-server.token:ro
       # Optional: Mount custom config.yaml (uncomment and create the file first)
       # Copy config.example.yaml to config.yaml, modify it, then uncomment:
       # - ./config.yaml:/app/data/config.yaml
@@ -92,14 +88,6 @@ services:
       # =======================================================================
       - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@relaydeck.local}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
-
-      # =======================================================================
-      # Optional Host Codex app-server Bridge (macOS Docker Desktop)
-      # =======================================================================
-      # When URL is empty, RelayDeck preserves its existing local stdio runtime.
-      # The bridge token is always read from the read-only file mount above.
-      - CODEX_APP_SERVER_REMOTE_URL=${CODEX_APP_SERVER_REMOTE_URL:-}
-      - CODEX_APP_SERVER_REMOTE_TOKEN_FILE=/run/relaydeck/codex-app-server.token
 
       # =======================================================================
       # JWT Configuration

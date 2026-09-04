@@ -5,12 +5,12 @@
 
 ## Summary
 
-Replace every owned `Sub2API` identity in the code-and-configuration scope with
-RelayDeck, including the Go module path, generated client configuration,
-runtime names, build/release metadata, deployment resources, and code-bearing
-filenames. This is intentionally breaking: previous protocol and persistence
-identifiers receive no alias or migration. Historical, legal, and third-party
-content remains outside the scope.
+Replace every legacy product identity in the repository with RelayDeck,
+including the Go module path, generated client configuration, runtime names,
+build/release metadata, deployment resources, documentation, legal text, and
+historical artifacts. This is intentionally breaking: previous protocol and
+persistence identifiers receive no alias or migration. Third-party branded
+links and referral codes are removed or neutralized rather than invented.
 
 ## Technical Context
 
@@ -31,8 +31,8 @@ backend build, source scan
 runtime work is introduced by the rename.
 
 **Constraints**: No aliases or automatic migration; no push, registry publish,
-deployment, or invented DNS destination; legal, archived, and third-party
-content stays untouched.
+deployment, or invented DNS destination; retain stated legal owners and remove
+rather than fabricate third-party brands, paths, or referral codes.
 
 **Scale/Scope**: Approximately 1,700 source/configuration files and 4,499
 case-varied occurrences identified before implementation.
@@ -43,7 +43,7 @@ case-varied occurrences identified before implementation.
 |---|---|---|
 | Canonical Product Identity | Map every case variant consistently | Pass — mapping is defined in research.md |
 | Intentional Breaking Rename | Do not retain aliases or migrations | Pass — explicitly required by the user |
-| Preserve Functional Interfaces Unless Named | Classify third-party values first | Pass — user-owned identifiers change; third-party/history is excluded |
+| Preserve Functional Interfaces Unless Named | Classify third-party values first | Pass — third-party branded values are removed or made neutral; they are never fabricated |
 | Evidence-Driven Delivery | Use a red-green focused test and final build/scan gates | Pass — tasks put test before source edit |
 | Controlled Publication | Do not publish or deploy | Pass — only local source/config changes are planned |
 

@@ -101,6 +101,17 @@ func TestAccountIsSchedulable_QuotaExceeded(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "legacy codex app-server credentials are not schedulable",
+			account: &Account{
+				Platform:    PlatformOpenAI,
+				Status:      StatusActive,
+				Schedulable: true,
+				Type:        AccountTypeOAuth,
+				Credentials: map[string]any{"auth_provider": "codex_app_server"},
+			},
+			want: false,
+		},
+		{
 			name: "bedrock quota exceeded",
 			account: &Account{
 				Status:      StatusActive,

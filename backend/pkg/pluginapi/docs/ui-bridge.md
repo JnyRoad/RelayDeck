@@ -18,7 +18,7 @@ UI 到宿主：
 
 ```json
 {
-  "source": "sub2api-plugin-ui",
+  "source": "relaydeck-plugin-ui",
   "bridge_token": "TOKEN",
   "type": "config.load",
   "request_id": "UNIQUE_ID"
@@ -29,7 +29,7 @@ UI 到宿主：
 
 ```json
 {
-  "source": "sub2api-plugin-host",
+  "source": "relaydeck-plugin-host",
   "bridge_token": "TOKEN",
   "request_id": "UNIQUE_ID",
   "ok": true
@@ -40,7 +40,7 @@ UI 到宿主：
 
 | `type` | UI 参数 | 成功响应 |
 |---|---|---|
-| `sub2api.plugin.ready` | 无 | 无响应 |
+| `relaydeck.plugin.ready` | 无 | 无响应 |
 | `config.load` | 无 | `config` |
 | `config.save` | `config` 对象 | 规范化后的 `config` |
 | `config.test` | 无 | `result` |

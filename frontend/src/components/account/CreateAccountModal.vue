@@ -392,60 +392,6 @@
           </button>
 
         </div>
-
-        <div v-if="accountCategory === 'oauth-based'" class="mt-4">
-          <label class="input-label">{{ t('admin.accounts.oauth.openai.appServer.methodLabel') }}</label>
-          <div class="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <button
-              type="button"
-              data-testid="openai-auth-scheme-legacy-oauth"
-              @click="openAIAuthScheme = 'legacy_oauth'"
-              :class="[
-                'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-                openAIAuthScheme === 'legacy_oauth'
-                  ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
-                  : 'border-gray-200 hover:border-green-300 dark:border-dark-600 dark:hover:border-green-700'
-              ]"
-            >
-              <Icon name="key" size="sm" />
-              <div>
-                <span class="block text-sm font-medium text-gray-900 dark:text-white">{{
-                  t('admin.accounts.oauth.openai.appServer.legacyTitle')
-                }}</span>
-                <span class="text-xs text-gray-500 dark:text-gray-400">{{
-                  t('admin.accounts.oauth.openai.appServer.legacyDescription')
-                }}</span>
-              </div>
-            </button>
-            <button
-              type="button"
-              data-testid="openai-auth-scheme-app-server"
-              @click="openAIAuthScheme = 'app_server'"
-              :class="[
-                'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-                openAIAuthScheme === 'app_server'
-                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                  : 'border-gray-200 hover:border-blue-300 dark:border-dark-600 dark:hover:border-blue-700'
-              ]"
-            >
-              <Icon name="terminal" size="sm" />
-              <div>
-                <span class="block text-sm font-medium text-gray-900 dark:text-white">{{
-                  t('admin.accounts.oauth.openai.appServer.managedTitle')
-                }}</span>
-                <span class="text-xs text-gray-500 dark:text-gray-400">{{
-                  t('admin.accounts.oauth.openai.appServer.managedDescription')
-                }}</span>
-              </div>
-            </button>
-          </div>
-          <p
-            v-if="isOfficialAppServerLogin"
-            class="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800 dark:border-blue-800/40 dark:bg-blue-900/20 dark:text-blue-200"
-          >
-            {{ t('admin.accounts.oauth.openai.appServer.isolatedHint') }}
-          </p>
-        </div>
       </div>
 
       <!-- Account Type Selection (Grok) -->
@@ -3462,87 +3408,7 @@
 
     <!-- Step 2: OAuth Authorization -->
     <div v-else class="space-y-5">
-      <div v-if="isOfficialAppServerLogin" class="space-y-4">
-        <div class="rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-800/40 dark:bg-blue-900/20">
-          <h3 class="text-sm font-semibold text-blue-900 dark:text-blue-100">
-            {{ t('admin.accounts.oauth.openai.appServer.title') }}
-          </h3>
-          <p class="mt-1 text-sm text-blue-800 dark:text-blue-200">
-            {{ t('admin.accounts.oauth.openai.appServer.description') }}
-          </p>
-        </div>
-
-        <template v-if="!appServerLogin">
-          <button
-            type="button"
-            class="btn btn-primary"
-            data-testid="app-server-login-start"
-            :disabled="appServerLoginLoading"
-            @click="startAppServerLogin"
-          >
-            {{
-              appServerLoginLoading
-                ? t('admin.accounts.oauth.generating')
-                : t('admin.accounts.oauth.openai.appServer.startDeviceCode')
-            }}
-          </button>
-          <p v-if="appServerLoginError" class="text-sm text-red-600 dark:text-red-400">
-            {{ appServerLoginError }}
-          </p>
-        </template>
-
-        <template v-else>
-          <div
-            v-if="appServerLogin.status === 'pending'"
-            class="space-y-3 rounded-lg border border-gray-200 p-4 dark:border-dark-600"
-          >
-            <p class="text-sm text-gray-700 dark:text-gray-300">
-              {{ t('admin.accounts.oauth.openai.appServer.deviceCodeInstructions') }}
-            </p>
-            <a
-              v-if="appServerLogin.verification_url"
-              :href="appServerLogin.verification_url"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="inline-flex text-sm font-medium text-primary-600 hover:underline dark:text-primary-400"
-            >
-              {{ appServerLogin.verification_url }}
-            </a>
-            <code
-              v-if="appServerLogin.user_code"
-              class="block w-fit rounded bg-gray-100 px-3 py-2 font-mono text-base font-semibold tracking-widest text-gray-900 dark:bg-dark-600 dark:text-white"
-            >{{ appServerLogin.user_code }}</code>
-            <div class="flex flex-wrap items-center gap-3">
-              <span class="text-sm text-gray-600 dark:text-gray-400">{{
-                t('admin.accounts.oauth.openai.appServer.waiting')
-              }}</span>
-              <button
-                type="button"
-                class="btn btn-secondary btn-sm"
-                data-testid="app-server-login-refresh"
-                :disabled="appServerLoginLoading"
-                @click="refreshAppServerLogin"
-              >
-                {{ t('admin.accounts.oauth.openai.appServer.refresh') }}
-              </button>
-            </div>
-          </div>
-
-          <div
-            v-else-if="appServerLogin.status === 'completed'"
-            class="rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800 dark:border-green-800/40 dark:bg-green-900/20 dark:text-green-200"
-          >
-            {{ t('admin.accounts.oauth.openai.appServer.completed') }}
-          </div>
-
-          <div v-else class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-800/40 dark:bg-red-900/20 dark:text-red-200">
-            {{ appServerLogin.error || t('admin.accounts.oauth.openai.appServer.failed') }}
-          </div>
-        </template>
-      </div>
-
       <OAuthAuthorizationFlow
-        v-else
         ref="oauthFlowRef"
         :add-method="form.platform === 'anthropic' ? addMethod : 'oauth'"
         :auth-url="currentAuthUrl"
@@ -3625,7 +3491,7 @@
           {{ t('common.back') }}
         </button>
         <button
-          v-if="!isOfficialAppServerLogin && isManualInputMethod"
+          v-if="isManualInputMethod"
           type="button"
           :disabled="!canExchangeCode"
           class="btn btn-primary"
@@ -3656,16 +3522,6 @@
               ? t('admin.accounts.oauth.verifying')
               : t('admin.accounts.oauth.completeAuth')
           }}
-        </button>
-        <button
-          v-if="isOfficialAppServerLogin && appServerLogin?.status === 'completed'"
-          type="button"
-          class="btn btn-primary"
-          data-testid="app-server-login-create-account"
-          :disabled="submitting"
-          @click="createAppServerAccount"
-        >
-          {{ submitting ? t('admin.accounts.creating') : t('admin.accounts.oauth.openai.appServer.createAccount') }}
         </button>
       </div>
     </template>
@@ -3902,7 +3758,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onBeforeUnmount, watch } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import {
@@ -3926,7 +3782,6 @@ import { useOpenAIOAuth } from '@/composables/useOpenAIOAuth'
 import { useGeminiOAuth } from '@/composables/useGeminiOAuth'
 import { useAntigravityOAuth } from '@/composables/useAntigravityOAuth'
 import { useGrokOAuth } from '@/composables/useGrokOAuth'
-import type { CodexAppServerLogin } from '@/api/admin/accounts'
 import type {
   Proxy,
   AdminGroup,
@@ -4008,7 +3863,6 @@ const authStore = useAuthStore()
 const browserTimeZone = getBrowserTimeZone()
 
 const oauthStepTitle = computed(() => {
-  if (isOfficialAppServerLogin.value) return t('admin.accounts.oauth.openai.appServer.title')
   if (form.platform === 'openai') return t('admin.accounts.oauth.openai.title')
   if (form.platform === 'gemini') return t('admin.accounts.oauth.gemini.title')
   if (form.platform === 'antigravity') return t('admin.accounts.oauth.antigravity.title')
@@ -4091,102 +3945,6 @@ const openaiOAuth = useOpenAIOAuth() // For OpenAI OAuth
 const geminiOAuth = useGeminiOAuth() // For Gemini OAuth
 const antigravityOAuth = useAntigravityOAuth() // For Antigravity OAuth
 const grokOAuth = useGrokOAuth() // For Grok OAuth
-
-const openAIAuthScheme = ref<'legacy_oauth' | 'app_server'>('legacy_oauth')
-const appServerLogin = ref<CodexAppServerLogin | null>(null)
-const appServerLoginLoading = ref(false)
-const appServerLoginError = ref('')
-let appServerLoginPollingTimer: ReturnType<typeof setInterval> | undefined
-
-const isOfficialAppServerLogin = computed(() => {
-  return form.platform === 'openai' && accountCategory.value === 'oauth-based' && openAIAuthScheme.value === 'app_server'
-})
-
-const stopAppServerLoginPolling = () => {
-  if (appServerLoginPollingTimer !== undefined) {
-    clearInterval(appServerLoginPollingTimer)
-    appServerLoginPollingTimer = undefined
-  }
-}
-
-const refreshAppServerLogin = async () => {
-  if (!appServerLogin.value?.session_id) return
-  appServerLoginLoading.value = true
-  appServerLoginError.value = ''
-  try {
-    const login = await adminAPI.accounts.getCodexAppServerLogin(appServerLogin.value.session_id)
-    appServerLogin.value = login
-    if (login.status !== 'pending') {
-      stopAppServerLoginPolling()
-    }
-  } catch (error: any) {
-    stopAppServerLoginPolling()
-    appServerLoginError.value = error.response?.data?.message || error.response?.data?.detail || t('admin.accounts.oauth.openai.appServer.failed')
-  } finally {
-    appServerLoginLoading.value = false
-  }
-}
-
-const startAppServerLoginPolling = () => {
-  stopAppServerLoginPolling()
-  appServerLoginPollingTimer = setInterval(() => {
-    void refreshAppServerLogin()
-  }, 2000)
-}
-
-const startAppServerLogin = async () => {
-  appServerLoginLoading.value = true
-  appServerLoginError.value = ''
-  try {
-    const login = await adminAPI.accounts.startCodexAppServerLogin('device_code')
-    appServerLogin.value = login
-    if (login.status === 'pending') {
-      startAppServerLoginPolling()
-    }
-  } catch (error: any) {
-    appServerLoginError.value = error.response?.data?.message || error.response?.data?.detail || t('admin.accounts.oauth.openai.appServer.failed')
-    appStore.showError(appServerLoginError.value)
-  } finally {
-    appServerLoginLoading.value = false
-  }
-}
-
-const abandonAppServerLogin = () => {
-  const activeLogin = appServerLogin.value
-  stopAppServerLoginPolling()
-  appServerLogin.value = null
-  appServerLoginError.value = ''
-  if (activeLogin && activeLogin.status !== 'completed') {
-    void adminAPI.accounts.cancelCodexAppServerLogin(activeLogin.session_id).catch(() => undefined)
-  }
-}
-
-const createAppServerAccount = async () => {
-  const login = appServerLogin.value
-  if (!login || login.status !== 'completed') return
-  submitting.value = true
-  try {
-    const payload: { name: string; notes?: string; priority: number } = {
-      name: form.name.trim(),
-      priority: form.priority
-    }
-    if (form.notes.trim()) {
-      payload.notes = form.notes.trim()
-    }
-    await adminAPI.accounts.createCodexAppServerAccount(login.session_id, payload)
-    appStore.showSuccess(t('admin.accounts.accountCreated'))
-    emit('created')
-    handleClose()
-  } catch (error: any) {
-    appStore.showError(error.response?.data?.message || error.response?.data?.detail || t('admin.accounts.failedToCreate'))
-  } finally {
-    submitting.value = false
-  }
-}
-
-onBeforeUnmount(() => {
-  abandonAppServerLogin()
-})
 
 // Computed: current OAuth state for template binding
 const currentAuthUrl = computed(() => {
@@ -4934,8 +4692,6 @@ watch(
       interceptWarmupRequests.value = false
     }
     if (newPlatform !== 'openai') {
-      openAIAuthScheme.value = 'legacy_oauth'
-      abandonAppServerLogin()
       openaiPassthroughEnabled.value = false
       openaiFlattenNamespacesEnabled.value = false
       openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
@@ -5329,9 +5085,6 @@ const submitCreateAccount = async (payload: CreateAccountRequest) => {
 
 // Methods
 const resetForm = () => {
-  // An incomplete device-code session is owned by the official runtime and
-  // must be explicitly cancelled when the modal is reset or closed.
-  abandonAppServerLogin()
   step.value = 1
   form.name = ''
   form.notes = ''
@@ -5346,7 +5099,6 @@ const resetForm = () => {
   form.group_ids = []
   form.expires_at = null
   accountCategory.value = 'oauth-based'
-  openAIAuthScheme.value = 'legacy_oauth'
   addMethod.value = 'oauth'
   accountMode.value = 'payg'
   apiProtocol.value = 'adaptive'
@@ -5903,7 +5655,6 @@ const handleSubmit = async () => {
 }
 
 const goBackToBasicInfo = () => {
-  abandonAppServerLogin()
   step.value = 1
   oauth.resetState()
   openaiOAuth.resetState()

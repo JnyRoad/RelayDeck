@@ -48,8 +48,8 @@ resources.
 
 ## Product Identity
 
-The canonical source repository is `github.com/JnyRoad/RelayDeck`; the original
-`github.com/Wei-Shaw/sub2api` repository is read-only upstream. Runtime names,
+The canonical source repository is `github.com/JnyRoad/RelayDeck`; the legacy
+upstream repository is read-only. Runtime names,
 environment variables, cache prefixes, default databases, service units,
 container names, release metadata, generated client setup, and package/module
 identifiers are part of the product identity. Legal texts, third-party links,
