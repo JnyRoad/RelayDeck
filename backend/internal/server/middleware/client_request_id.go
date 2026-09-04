@@ -18,30 +18,34 @@ const clientRequestIDHeader = "X-Client-Request-ID"
 // This is used by the Ops monitoring module for end-to-end request correlation.
 func ClientRequestID() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if c.Request == nil {
-			c.Next()
-			return
-		}
-
-		if v, _ := c.Request.Context().Value(ctxkey.ClientRequestID).(string); strings.TrimSpace(v) != "" {
-			var valid bool
-			v, valid = normalizeCorrelationID(v)
-			if !valid {
-				v = uuid.New().String()
-			}
-			c.Header(clientRequestIDHeader, v)
-			ctx := context.WithValue(c.Request.Context(), ctxkey.ClientRequestID, v)
-			c.Request = c.Request.WithContext(ctx)
-			c.Next()
-			return
-		}
-
-		id := uuid.New().String()
-		c.Header(clientRequestIDHeader, id)
-		ctx := context.WithValue(c.Request.Context(), ctxkey.ClientRequestID, id)
-		requestLogger := logger.FromContext(ctx).With(zap.String("client_request_id", strings.TrimSpace(id)))
-		ctx = logger.IntoContext(ctx, requestLogger)
-		c.Request = c.Request.WithContext(ctx)
+		ensureClientRequestID(c)
 		c.Next()
 	}
+}
+
+// ensureClientRequestID 将关联标识写入上下文和响应头，并可被热路径观测中间件提前复用。
+func ensureClientRequestID(c *gin.Context) string {
+	if c == nil || c.Request == nil {
+		return ""
+	}
+
+	if value, _ := c.Request.Context().Value(ctxkey.ClientRequestID).(string); strings.TrimSpace(value) != "" {
+		var valid bool
+		value, valid = normalizeCorrelationID(value)
+		if !valid {
+			value = uuid.New().String()
+		}
+		c.Header(clientRequestIDHeader, value)
+		ctx := context.WithValue(c.Request.Context(), ctxkey.ClientRequestID, value)
+		c.Request = c.Request.WithContext(ctx)
+		return value
+	}
+
+	id := uuid.New().String()
+	c.Header(clientRequestIDHeader, id)
+	ctx := context.WithValue(c.Request.Context(), ctxkey.ClientRequestID, id)
+	requestLogger := logger.FromContext(ctx).With(zap.String("client_request_id", strings.TrimSpace(id)))
+	ctx = logger.IntoContext(ctx, requestLogger)
+	c.Request = c.Request.WithContext(ctx)
+	return id
 }

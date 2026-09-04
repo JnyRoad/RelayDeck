@@ -13,6 +13,7 @@ import (
 	"github.com/JnyRoad/RelayDeck/ent"
 	"github.com/JnyRoad/RelayDeck/internal/config"
 	"github.com/JnyRoad/RelayDeck/internal/handler"
+	"github.com/JnyRoad/RelayDeck/internal/modeltrace"
 	"github.com/JnyRoad/RelayDeck/internal/payment"
 	"github.com/JnyRoad/RelayDeck/internal/repository"
 	"github.com/JnyRoad/RelayDeck/internal/securityaudit"
@@ -25,10 +26,11 @@ import (
 )
 
 type Application struct {
-	Server        *http.Server
-	PromptAudit   *securityaudit.PromptService
-	PluginManager *service.PluginManager
-	Cleanup       func()
+	Server            *http.Server
+	PromptAudit       *securityaudit.PromptService
+	ModelTraceCleanup *modeltrace.CleanupService
+	PluginManager     *service.PluginManager
+	Cleanup           func()
 }
 
 func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
@@ -39,6 +41,11 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		// Business layer ProviderSets
 		repository.ProviderSet,
 		service.ProviderSet,
+		modeltrace.ProvideSettingsConfigStore,
+		modeltrace.ProvideService,
+		modeltrace.ProvideQueryService,
+		modeltrace.ProvideCleanupService,
+		wire.Bind(new(modeltrace.Recorder), new(*modeltrace.Service)),
 		securityaudit.ProviderSet,
 		payment.ProviderSet,
 		middleware.ProviderSet,
@@ -58,7 +65,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		provideCleanup,
 
 		// Application struct
-		wire.Struct(new(Application), "Server", "PromptAudit", "PluginManager", "Cleanup"),
+		wire.Struct(new(Application), "Server", "PromptAudit", "ModelTraceCleanup", "PluginManager", "Cleanup"),
 	)
 	return nil, nil
 }
@@ -127,6 +134,7 @@ func provideCleanup(
 	auditLog *service.AuditLogService,
 	openAIAutoReset *service.OpenAIQuotaAutoResetService,
 	promptAudit *securityaudit.PromptService,
+	modelTraceCleanup *modeltrace.CleanupService,
 	pluginManager *service.PluginManager,
 ) func() {
 	return func() {
@@ -179,6 +187,12 @@ func provideCleanup(
 			{"PromptAuditService", func() error {
 				if promptAudit != nil {
 					return promptAudit.Shutdown(ctx)
+				}
+				return nil
+			}},
+			{"ModelTraceCleanupService", func() error {
+				if modelTraceCleanup != nil {
+					return modelTraceCleanup.Stop(ctx)
 				}
 				return nil
 			}},

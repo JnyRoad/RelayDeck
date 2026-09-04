@@ -29,6 +29,32 @@ type openAIWSClientFrameConn struct {
 	// model identifier they supplied for the current turn.
 	restoreResponseModel func([]byte) []byte
 	restoreToolNames     func([]byte) []byte
+	onFrameWritten       func(coderws.MessageType, []byte)
+}
+
+// writeOpenAIWSLocalPolicyBlockedFrame reports a policy rejection only after
+// its error frame reached the client. finishTurn is true only when no relay
+// exit will otherwise report that turn, preventing duplicate trace finalizers.
+func writeOpenAIWSLocalPolicyBlockedFrame(ctx context.Context, conn *coderws.Conn, timeout time.Duration, hooks *OpenAIWSIngressHooks, turn int, blocked *OpenAIFastBlockedError, finishTurn bool) {
+	if conn == nil || blocked == nil || turn < 1 {
+		return
+	}
+	eventBytes := buildOpenAIFastPolicyBlockedWSEvent(blocked)
+	if eventBytes == nil {
+		return
+	}
+	writeCtx, cancel := context.WithTimeout(ctx, timeout)
+	err := conn.Write(writeCtx, coderws.MessageText, eventBytes)
+	cancel()
+	if err != nil || hooks == nil {
+		return
+	}
+	if hooks.ClientFrameWritten != nil {
+		hooks.ClientFrameWritten(turn, eventBytes)
+	}
+	if finishTurn && hooks.AfterTurn != nil {
+		hooks.AfterTurn(turn, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, blocked.Message, blocked))
+	}
 }
 
 // openAIWSPolicyEnforcingFrameConn wraps a client-side FrameConn and runs
@@ -651,7 +677,11 @@ func (c *openAIWSClientFrameConn) WriteFrame(ctx context.Context, msgType coderw
 			payload = c.restoreToolNames(payload)
 		}
 	}
-	return c.conn.Write(ctx, msgType, payload)
+	err := c.conn.Write(ctx, msgType, payload)
+	if err == nil && c.onFrameWritten != nil {
+		c.onFrameWritten(msgType, payload)
+	}
+	return err
 }
 
 func (c *openAIWSClientFrameConn) Close() error {
@@ -782,12 +812,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		// to send the close frame, so the error event is guaranteed to
 		// reach the kernel send buffer before any close frame is queued.
 		// No explicit flush hop is required here.
-		eventBytes := buildOpenAIFastPolicyBlockedWSEvent(blocked)
-		if eventBytes != nil {
-			writeCtx, cancelWrite := context.WithTimeout(ctx, s.openAIWSWriteTimeout())
-			_ = clientConn.Write(writeCtx, coderws.MessageText, eventBytes)
-			cancelWrite()
-		}
+		writeOpenAIWSLocalPolicyBlockedFrame(ctx, clientConn, s.openAIWSWriteTimeout(), hooks, 1, blocked, true)
 		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, blocked.Message, blocked)
 	}
 	firstClientMessage = updatedFirst
@@ -969,6 +994,18 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		restoreToolNames: func(payload []byte) []byte {
 			return restoreCodexToolNamesFromContext(c, payload)
 		},
+		onFrameWritten: func(msgType coderws.MessageType, payload []byte) {
+			if hooks == nil || hooks.ClientFrameWritten == nil || msgType != coderws.MessageText {
+				return
+			}
+			turnNo := int(completedTurns.Load()) + 1
+			if openAIWSPassthroughIsTerminalOutput(payload) {
+				turnNo = int(completedTurns.Load())
+			}
+			if turnNo > 0 {
+				hooks.ClientFrameWritten(turnNo, payload)
+			}
+		},
 	}
 	policyClientConn := &openAIWSPolicyEnforcingFrameConn{
 		inner: clientFrameConn,
@@ -1120,13 +1157,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			// See note above on Conn.Write being synchronous w.r.t. flush;
 			// no explicit flush is required to ensure the error event lands
 			// before the close frame.
-			eventBytes := buildOpenAIFastPolicyBlockedWSEvent(blocked)
-			if eventBytes == nil {
-				return
-			}
-			writeCtx, cancel := context.WithTimeout(ctx, s.openAIWSWriteTimeout())
-			_ = clientConn.Write(writeCtx, coderws.MessageText, eventBytes)
-			cancel()
+			writeOpenAIWSLocalPolicyBlockedFrame(ctx, clientConn, s.openAIWSWriteTimeout(), hooks, int(completedTurns.Load())+1, blocked, false)
 		},
 	}
 	upstreamFirstMessageSent := false

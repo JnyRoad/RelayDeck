@@ -8,6 +8,7 @@ import (
 
 	"github.com/JnyRoad/RelayDeck/internal/config"
 	"github.com/JnyRoad/RelayDeck/internal/handler"
+	"github.com/JnyRoad/RelayDeck/internal/modeltrace"
 	middleware2 "github.com/JnyRoad/RelayDeck/internal/server/middleware"
 	"github.com/JnyRoad/RelayDeck/internal/server/routes"
 	"github.com/JnyRoad/RelayDeck/internal/service"
@@ -34,6 +35,7 @@ func SetupRouter(
 	opsService *service.OpsService,
 	settingService *service.SettingService,
 	compositeResolver *service.CompositeRouteResolver,
+	modelTrace modeltrace.Recorder,
 	cfg *config.Config,
 	redisClient *redis.Client,
 ) *gin.Engine {
@@ -69,6 +71,8 @@ func SetupRouter(
 		return nil
 	}))
 	r.Use(middleware2.ServerTiming(cfg.Server.EnableServerTiming))
+	// 模型追踪中间件自身按路由白名单筛选，默认关闭时仅使用缓存策略做无写入判定。
+	r.Use(middleware2.NewModelCallTraceMiddleware(modelTrace))
 
 	// Serve embedded frontend with settings injection if available
 	if web.HasEmbeddedFrontend() {

@@ -210,6 +210,86 @@ func startPassthroughLifecycleServerWithHooks(
 	return server, serverErr
 }
 
+// TestWriteOpenAIWSLocalPolicyBlockedFrameReportsVisibleFrame verifies that an
+// initial local rejection finalizes after its error frame while a relay-owned
+// turn only reports the frame and leaves finalization to the relay exit path.
+func TestWriteOpenAIWSLocalPolicyBlockedFrameReportsVisibleFrame(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	frames := make(chan struct {
+		turn    int
+		payload []byte
+	}, 1)
+	afterTurns := make(chan struct {
+		turn int
+		err  error
+	}, 1)
+	serverErr := make(chan error, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := coderws.Accept(w, r, nil)
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		writeOpenAIWSLocalPolicyBlockedFrame(r.Context(), conn, time.Second, &OpenAIWSIngressHooks{
+			ClientFrameWritten: func(turn int, payload []byte) {
+				frames <- struct {
+					turn    int
+					payload []byte
+				}{turn: turn, payload: append([]byte(nil), payload...)}
+			},
+			AfterTurn: func(turn int, _ *OpenAIForwardResult, turnErr error) {
+				afterTurns <- struct {
+					turn int
+					err  error
+				}{turn: turn, err: turnErr}
+			},
+		}, 2, &OpenAIFastBlockedError{Message: "trace policy block"}, true)
+		writeOpenAIWSLocalPolicyBlockedFrame(r.Context(), conn, time.Second, &OpenAIWSIngressHooks{
+			ClientFrameWritten: func(turn int, payload []byte) {
+				frames <- struct {
+					turn    int
+					payload []byte
+				}{turn: turn, payload: append([]byte(nil), payload...)}
+			},
+			AfterTurn: func(turn int, _ *OpenAIForwardResult, turnErr error) {
+				afterTurns <- struct {
+					turn int
+					err  error
+				}{turn: turn, err: turnErr}
+			},
+		}, 3, &OpenAIFastBlockedError{Message: "relay-owned policy block"}, false)
+		serverErr <- nil
+	}))
+	defer server.Close()
+	client := dialPassthroughLifecycleClient(t, server)
+	defer func() { _ = client.CloseNow() }()
+
+	payload, err := readPassthroughLifecycleFrame(t, client, time.Second)
+	require.NoError(t, err)
+	require.Equal(t, "error", gjson.GetBytes(payload, "type").String())
+	frame := <-frames
+	require.Equal(t, 2, frame.turn)
+	require.Equal(t, payload, frame.payload)
+	after := <-afterTurns
+	require.Equal(t, 2, after.turn)
+	var blocked *OpenAIFastBlockedError
+	require.ErrorAs(t, after.err, &blocked)
+	require.Equal(t, "trace policy block", blocked.Message)
+	relayOwnedPayload, err := readPassthroughLifecycleFrame(t, client, time.Second)
+	require.NoError(t, err)
+	require.Equal(t, "error", gjson.GetBytes(relayOwnedPayload, "type").String())
+	relayOwnedFrame := <-frames
+	require.Equal(t, 3, relayOwnedFrame.turn)
+	require.Equal(t, relayOwnedPayload, relayOwnedFrame.payload)
+	select {
+	case unexpected := <-afterTurns:
+		t.Fatalf("relay-owned rejection must defer finalization, got turn %d", unexpected.turn)
+	case <-time.After(50 * time.Millisecond):
+	}
+	require.NoError(t, <-serverErr)
+}
+
 func TestPassthroughLifecycle_CyberTerminalEventsMarkBeforeAfterTurn(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

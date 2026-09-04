@@ -1,0 +1,299 @@
+// Package middleware contains the non-intrusive HTTP boundary for model call tracing.
+package middleware
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"hash"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/JnyRoad/RelayDeck/internal/modeltrace"
+	"github.com/JnyRoad/RelayDeck/internal/pkg/ctxkey"
+	"github.com/gin-gonic/gin"
+)
+
+// NewModelCallTraceMiddleware observes traceable model gateway calls after
+// authentication. Recorder failures are intentionally ignored to preserve the
+// model handler's response and availability.
+func NewModelCallTraceMiddleware(recorder modeltrace.Recorder) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if recorder == nil || !modeltrace.IsTraceableGatewayRoute(c.Request.Method, traceRoute(c)) {
+			c.Next()
+			return
+		}
+
+		startedAt := time.Now()
+		handle, err := recorder.Start(c.Request.Context(), modeltrace.StartInput{
+			RequestID: ensureClientRequestID(c),
+			Route:     traceRoute(c),
+			Protocol:  "sync",
+		})
+		if err != nil || !handle.Enabled {
+			c.Next()
+			return
+		}
+
+		requestCapture := newBoundedBodyCapture(c.Request.Body, modeltrace.DefaultPayloadLimitBytes)
+		c.Request.Body = requestCapture
+		responseCapture := newTraceResponseWriter(c.Writer, modeltrace.DefaultPayloadLimitBytes)
+		c.Writer = responseCapture
+
+		c.Next()
+
+		traceCtx, cancelTrace := tracePersistenceContext(c.Request.Context())
+		defer cancelTrace()
+		requestPayload := requestCapture.Payload(modeltrace.PayloadKindClientRequest, c.GetHeader("Content-Type"))
+		_ = recorder.RecordPayload(traceCtx, handle, requestPayload)
+		responseKind := modeltrace.PayloadKindClientResponse
+		if c.Writer.Status() >= http.StatusBadRequest {
+			responseKind = modeltrace.PayloadKindErrorResponse
+		}
+		responsePayload := responseCapture.Payload(responseKind, c.Writer.Header().Get("Content-Type"))
+		_ = recorder.RecordPayload(traceCtx, handle, responsePayload)
+
+		firstByteMS := responseCapture.FirstByteMS(startedAt)
+		finishInput := modeltrace.FinishInput{
+			Outcome:       traceOutcome(c, responseCapture.Stream()),
+			StatusCode:    c.Writer.Status(),
+			Stream:        responseCapture.Stream(),
+			DurationMS:    int(time.Since(startedAt).Milliseconds()),
+			FirstByteMS:   firstByteMS,
+			RequestBytes:  requestPayload.OriginalBytes,
+			ResponseBytes: responsePayload.OriginalBytes,
+		}
+		populateTraceFinishIdentity(c, &finishInput)
+		_ = recorder.Finish(traceCtx, handle, finishInput)
+	}
+}
+
+// tracePersistenceContext preserves completed handler values while decoupling
+// best-effort tracing from a client disconnect and bounding database work.
+func tracePersistenceContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+}
+
+// populateTraceFinishIdentity 读取鉴权和路由完成后形成的可信上下文，不读取客户端认证原文。
+func populateTraceFinishIdentity(c *gin.Context, input *modeltrace.FinishInput) {
+	if c == nil || input == nil {
+		return
+	}
+	if apiKey, ok := GetAPIKeyFromContext(c); ok && apiKey != nil {
+		input.UserID = positiveTraceID(apiKey.UserID)
+		input.APIKeyID = positiveTraceID(apiKey.ID)
+		input.GroupID = apiKey.GroupID
+	} else if apiKey, ok := GetOpsFallbackAPIKey(c); ok && apiKey != nil {
+		input.UserID = positiveTraceID(apiKey.UserID)
+		input.APIKeyID = positiveTraceID(apiKey.ID)
+		input.GroupID = apiKey.GroupID
+	}
+	if c.Request == nil {
+		return
+	}
+	if accountID, ok := c.Request.Context().Value(ctxkey.AccountID).(int64); ok {
+		input.AccountID = positiveTraceID(accountID)
+	}
+	input.RequestedModel = traceContextString(c, ctxkey.RequestedPublicModel)
+	if input.RequestedModel == "" {
+		input.RequestedModel = traceContextString(c, ctxkey.Model)
+	}
+	input.UpstreamModel = traceContextString(c, ctxkey.ResolvedUpstreamModel)
+}
+
+// positiveTraceID 转换有效关联键为指针，避免将零值写入外键字段。
+func positiveTraceID(value int64) *int64 {
+	if value <= 0 {
+		return nil
+	}
+	return &value
+}
+
+// traceContextString 从服务端建立的上下文读取有限长度的模型摘要。
+func traceContextString(c *gin.Context, key ctxkey.Key) string {
+	if c == nil || c.Request == nil {
+		return ""
+	}
+	value, _ := c.Request.Context().Value(key).(string)
+	value = strings.TrimSpace(value)
+	if len([]rune(value)) > 200 {
+		return string([]rune(value)[:200])
+	}
+	return value
+}
+
+// boundedBodyCapture forwards all reads to the original body while retaining a
+// bounded prefix and whole-stream digest for later best-effort trace storage.
+type boundedBodyCapture struct {
+	io.ReadCloser
+	limit     int
+	body      []byte
+	total     int64
+	digest    hash.Hash
+	truncated bool
+}
+
+// newBoundedBodyCapture wraps a request body without eagerly reading or
+// replacing it, so handlers retain their original validation and body limits.
+func newBoundedBodyCapture(body io.ReadCloser, limit int) *boundedBodyCapture {
+	if body == nil {
+		body = io.NopCloser(strings.NewReader(""))
+	}
+	return &boundedBodyCapture{
+		ReadCloser: body,
+		limit:      limit,
+		digest:     sha256.New(),
+	}
+}
+
+// Read copies only the bytes actually consumed by the handler and never
+// changes the original read count or error returned to the gateway handler.
+func (c *boundedBodyCapture) Read(buffer []byte) (int, error) {
+	read, err := c.ReadCloser.Read(buffer)
+	if read <= 0 {
+		return read, err
+	}
+	_, _ = c.digest.Write(buffer[:read])
+	c.total += int64(read)
+	remaining := c.limit - len(c.body)
+	if remaining <= 0 {
+		c.truncated = true
+		return read, err
+	}
+	if read > remaining {
+		c.body = append(c.body, buffer[:remaining]...)
+		c.truncated = true
+		return read, err
+	}
+	c.body = append(c.body, buffer[:read]...)
+	return read, err
+}
+
+// Payload returns an immutable snapshot of the body capture for the recorder.
+func (c *boundedBodyCapture) Payload(kind modeltrace.PayloadKind, contentType string) modeltrace.PayloadInput {
+	return modeltrace.PayloadInput{
+		Kind:          kind,
+		ContentType:   contentType,
+		Body:          append([]byte(nil), c.body...),
+		OriginalBytes: c.total,
+		SHA256:        hex.EncodeToString(c.digest.Sum(nil)),
+		Truncated:     c.truncated,
+	}
+}
+
+// traceResponseWriter delegates every Gin response-writer capability while
+// observing bytes that have already been selected for delivery to the client.
+type traceResponseWriter struct {
+	gin.ResponseWriter
+	capture    *boundedBodyCapture
+	firstWrite time.Time
+}
+
+// newTraceResponseWriter creates a writer wrapper that preserves Gin's flush,
+// hijack, and header behavior through embedded ResponseWriter delegation.
+func newTraceResponseWriter(writer gin.ResponseWriter, limit int) *traceResponseWriter {
+	return &traceResponseWriter{
+		ResponseWriter: writer,
+		capture:        newBoundedBodyCapture(io.NopCloser(strings.NewReader("")), limit),
+	}
+}
+
+// Write records only the bytes Gin reports as successfully delivered.
+func (w *traceResponseWriter) Write(body []byte) (int, error) {
+	written, err := w.ResponseWriter.Write(body)
+	w.record(deliveredTraceBytes(body, written))
+	return written, err
+}
+
+// WriteString records only the delivered prefix of a streamed string chunk.
+func (w *traceResponseWriter) WriteString(value string) (int, error) {
+	written, err := w.ResponseWriter.WriteString(value)
+	w.record(deliveredTraceBytes([]byte(value), written))
+	return written, err
+}
+
+// deliveredTraceBytes clamps an untrusted writer count to the supplied buffer
+// before the trace recorder observes it.
+func deliveredTraceBytes(body []byte, written int) []byte {
+	if written <= 0 {
+		return nil
+	}
+	if written >= len(body) {
+		return body
+	}
+	return body[:written]
+}
+
+// record appends a response chunk to the bounded capture without performing I/O.
+func (w *traceResponseWriter) record(body []byte) {
+	if len(body) == 0 {
+		return
+	}
+	if w.firstWrite.IsZero() {
+		w.firstWrite = time.Now()
+	}
+	_, _ = w.capture.digest.Write(body)
+	w.capture.total += int64(len(body))
+	remaining := w.capture.limit - len(w.capture.body)
+	if remaining <= 0 {
+		w.capture.truncated = true
+		return
+	}
+	if len(body) > remaining {
+		w.capture.body = append(w.capture.body, body[:remaining]...)
+		w.capture.truncated = true
+		return
+	}
+	w.capture.body = append(w.capture.body, body...)
+}
+
+// Payload returns the response capture with the recorder's requested kind.
+func (w *traceResponseWriter) Payload(kind modeltrace.PayloadKind, contentType string) modeltrace.PayloadInput {
+	return w.capture.Payload(kind, contentType)
+}
+
+// FirstByteMS reports nil until at least one response byte is written.
+func (w *traceResponseWriter) FirstByteMS(startedAt time.Time) *int {
+	if w.firstWrite.IsZero() {
+		return nil
+	}
+	value := int(w.firstWrite.Sub(startedAt).Milliseconds())
+	return &value
+}
+
+// Stream reports whether the client-visible response uses the SSE media type.
+func (w *traceResponseWriter) Stream() bool {
+	return strings.HasPrefix(strings.ToLower(w.Header().Get("Content-Type")), "text/event-stream")
+}
+
+// traceRoute obtains the matched Gin path when available and otherwise keeps
+// the raw request path for route classification during tests and edge cases.
+func traceRoute(c *gin.Context) string {
+	if route := c.FullPath(); route != "" {
+		return route
+	}
+	return c.Request.URL.Path
+}
+
+// traceOutcome turns the observable HTTP result into a stable trace terminal
+// state while preserving the handler's original status and error protocol.
+func traceOutcome(c *gin.Context, stream bool) modeltrace.Outcome {
+	if c.Request.Context().Err() != nil {
+		if stream {
+			return modeltrace.OutcomePartial
+		}
+		return modeltrace.OutcomeClientCancelled
+	}
+	if c.Writer.Status() == http.StatusForbidden {
+		return modeltrace.OutcomeBlocked
+	}
+	if c.Writer.Status() >= http.StatusBadRequest {
+		return modeltrace.OutcomeFailed
+	}
+	return modeltrace.OutcomeSucceeded
+}

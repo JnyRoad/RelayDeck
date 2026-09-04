@@ -10,6 +10,7 @@ import (
 
 	"github.com/JnyRoad/RelayDeck/internal/config"
 	"github.com/JnyRoad/RelayDeck/internal/handler"
+	"github.com/JnyRoad/RelayDeck/internal/modeltrace"
 	"github.com/JnyRoad/RelayDeck/internal/pkg/websearch"
 	middleware2 "github.com/JnyRoad/RelayDeck/internal/server/middleware"
 	"github.com/JnyRoad/RelayDeck/internal/service"
@@ -41,6 +42,7 @@ func ProvideRouter(
 	opsService *service.OpsService,
 	settingService *service.SettingService,
 	compositeResolver *service.CompositeRouteResolver,
+	modelTrace modeltrace.Recorder,
 	redisClient *redis.Client,
 ) *gin.Engine {
 	if cfg.Server.Mode == "release" {
@@ -87,7 +89,7 @@ func ProvideRouter(
 		service.SetWebSearchManager(websearch.NewManager(configs, redisClient))
 	})
 
-	return SetupRouter(r, handlers, jwtAuth, optionalJWTAuth, adminAuth, apiKeyAuth, auditLog, stepUpAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg, redisClient)
+	return SetupRouter(r, handlers, jwtAuth, optionalJWTAuth, adminAuth, apiKeyAuth, auditLog, stepUpAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, modelTrace, cfg, redisClient)
 }
 
 func configureTrustedProxies(r *gin.Engine, cfg config.ServerConfig) {

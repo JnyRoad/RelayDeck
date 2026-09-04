@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/JnyRoad/RelayDeck/internal/pkg/openai"
@@ -483,11 +484,20 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		}, nil
 	}
 
+	var clientOutputTurn atomic.Int32
 	writeClientMessage := func(message []byte) error {
 		writeCtx, cancel := newOpenAIWSDownstreamWriteContext(ctx, hooks, s.openAIWSWriteTimeout())
 		defer cancel()
 		message = restoreCodexToolNamesFromContext(c, message)
-		return clientConn.Write(writeCtx, coderws.MessageText, message)
+		if err := clientConn.Write(writeCtx, coderws.MessageText, message); err != nil {
+			return err
+		}
+		if hooks != nil && hooks.ClientFrameWritten != nil {
+			if turn := int(clientOutputTurn.Load()); turn > 0 {
+				hooks.ClientFrameWritten(turn, message)
+			}
+		}
+		return nil
 	}
 
 	readClientMessage := func() ([]byte, error) {
@@ -641,6 +651,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					return fmt.Errorf("resolve Grok websocket cache identity: %w", err)
 				}
 			}
+			clientOutputTurn.Store(int32(turn))
 			result, bridgeErr := s.proxyOpenAIWSHTTPBridgeTurn(
 				ctx,
 				c,
@@ -656,6 +667,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				turn,
 				writeClientMessage,
 			)
+			clientOutputTurn.CompareAndSwap(int32(turn), 0)
 			if bridgeErr != nil && isOpenAIWSSessionPreempted(ctx) {
 				return errOpenAIWSSessionPreempted
 			}
@@ -917,6 +929,8 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 
 	var rejectedFieldRetryState *openAIResponsesRejectedFieldRetryState
 	sendAndRelay := func(turn int, lease *openAIWSConnLease, payload []byte, payloadBytes int, originalModel string, imageBillingModel string, imageSizeTier string, imageInputSize string, requestedReasoningEffort *string) (*OpenAIForwardResult, error) {
+		clientOutputTurn.Store(int32(turn))
+		defer clientOutputTurn.CompareAndSwap(int32(turn), 0)
 		responseModelObserver := &upstreamResponseModelObserver{}
 		if lease == nil {
 			return nil, errors.New("upstream websocket lease is nil")
