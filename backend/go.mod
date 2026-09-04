@@ -63,6 +63,8 @@ require (
 	modernc.org/sqlite v1.44.3
 )
 
+replace github.com/coder/websocket => ./third_party/coder-websocket
+
 require (
 	ariga.io/atlas v0.32.1-0.20250325101103-175b25e1c1b9 // indirect
 	dario.cat/mergo v1.0.2 // indirect
