@@ -93,7 +93,7 @@ If you prefer manual control:
 ```bash
 # Clone repository
 git clone https://github.com/JnyRoad/RelayDeck.git
-cd relaydeck/deploy
+cd RelayDeck/deploy
 
 # Configure environment
 cp .env.example .env

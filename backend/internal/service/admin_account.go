@@ -40,10 +40,29 @@ func (s *adminServiceImpl) ListOpenAISchedulableAccountsForSchedulerScore(ctx co
 	if s == nil || s.accountRepo == nil {
 		return nil, nil
 	}
+	var (
+		accounts []Account
+		err      error
+	)
 	if groupID != nil {
-		return s.accountRepo.ListSchedulableByGroupIDAndPlatform(ctx, *groupID, PlatformOpenAI)
+		accounts, err = s.accountRepo.ListSchedulableByGroupIDAndPlatform(ctx, *groupID, PlatformOpenAI)
+	} else {
+		accounts, err = s.accountRepo.ListSchedulableUngroupedByPlatform(ctx, PlatformOpenAI)
 	}
-	return s.accountRepo.ListSchedulableUngroupedByPlatform(ctx, PlatformOpenAI)
+	if err != nil {
+		return nil, err
+	}
+	return filterLegacyCodexAppServerAccounts(accounts), nil
+}
+
+func filterLegacyCodexAppServerAccounts(accounts []Account) []Account {
+	filtered := make([]Account, 0, len(accounts))
+	for _, account := range accounts {
+		if !account.HasLegacyCodexAppServerCredentials() {
+			filtered = append(filtered, account)
+		}
+	}
+	return filtered
 }
 
 func (s *adminServiceImpl) GetAccount(ctx context.Context, id int64) (*Account, error) {
@@ -939,7 +958,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 
 	// 预取所有目标账号，供凭据守卫/代理守卫/混合渠道检查共用，避免多次 DB 查询。
 	var cachedTargets []*Account
-	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || openAISettings.any() || input.ProbeEnabled != nil || input.RateMultiplier != nil {
+	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || openAISettings.any() || input.ProbeEnabled != nil || input.RateMultiplier != nil || (input.Schedulable != nil && *input.Schedulable) {
 		loaded, err := s.accountRepo.GetByIDs(ctx, input.AccountIDs)
 		if err != nil {
 			return nil, err
@@ -950,6 +969,13 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	for _, account := range cachedTargets {
 		if account != nil {
 			targetsByID[account.ID] = account
+		}
+	}
+	if input.Schedulable != nil && *input.Schedulable {
+		for _, account := range cachedTargets {
+			if account != nil && account.HasLegacyCodexAppServerCredentials() {
+				return nil, legacyCodexAppServerSchedulingError(account.ID)
+			}
 		}
 	}
 	if openAISettings.any() {
@@ -1271,6 +1297,15 @@ func (s *adminServiceImpl) SetAccountError(ctx context.Context, id int64, errorM
 }
 
 func (s *adminServiceImpl) SetAccountSchedulable(ctx context.Context, id int64, schedulable bool) (*Account, error) {
+	if schedulable {
+		account, err := s.accountRepo.GetByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if account.HasLegacyCodexAppServerCredentials() {
+			return nil, legacyCodexAppServerSchedulingError(id)
+		}
+	}
 	if err := s.accountRepo.SetSchedulable(ctx, id, schedulable); err != nil {
 		return nil, err
 	}
@@ -1279,6 +1314,15 @@ func (s *adminServiceImpl) SetAccountSchedulable(ctx context.Context, id int64, 
 		return nil, err
 	}
 	return updated, nil
+}
+
+func legacyCodexAppServerSchedulingError(accountID int64) error {
+	return infraerrors.Newf(
+		http.StatusConflict,
+		"LEGACY_CODEX_APP_SERVER_NOT_SCHEDULABLE",
+		"account %d has legacy Codex app-server credentials and must be migrated before scheduling",
+		accountID,
+	)
 }
 
 func (s *adminServiceImpl) RevertAccountProxyFallback(ctx context.Context, id int64) error {

@@ -179,7 +179,7 @@ func (a *Account) EffectiveLoadFactor() int {
 }
 
 func (a *Account) IsSchedulable() bool {
-	if !a.IsActive() || !a.Schedulable {
+	if !a.IsActive() || !a.Schedulable || a.HasLegacyCodexAppServerCredentials() {
 		return false
 	}
 	now := time.Now()
@@ -361,6 +361,13 @@ func (a *Account) GetCredential(key string) string {
 	default:
 		return ""
 	}
+}
+
+// HasLegacyCodexAppServerCredentials identifies credentials created by the
+// removed host-local Codex app-server bridge. They cannot be used by the
+// standard scheduler because that bridge is no longer available.
+func (a *Account) HasLegacyCodexAppServerCredentials() bool {
+	return a != nil && a.IsOpenAIOAuth() && a.GetCredential("auth_provider") == "codex_app_server"
 }
 
 // GetCredentialAsTime 解析凭证中的时间戳字段，支持多种格式

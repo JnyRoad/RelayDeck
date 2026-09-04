@@ -35,6 +35,7 @@ type accountRepoStubForBulkUpdate struct {
 	getByIDAccounts     map[int64]*Account
 	getByIDErrByID      map[int64]error
 	getByIDCalled       []int64
+	setSchedulableCalls []int64
 	listByGroupData     map[int64][]Account
 	listByGroupErr      map[int64]error
 	listData            []Account
@@ -114,6 +115,22 @@ func (s *accountRepoStubForBulkUpdate) GetByID(_ context.Context, id int64) (*Ac
 	return nil, errors.New("account not found")
 }
 
+func (s *accountRepoStubForBulkUpdate) SetSchedulable(_ context.Context, id int64, _ bool) error {
+	s.setSchedulableCalls = append(s.setSchedulableCalls, id)
+	return nil
+}
+
+func (s *accountRepoStubForBulkUpdate) ListSchedulableByGroupIDAndPlatform(_ context.Context, groupID int64, _ string) ([]Account, error) {
+	if rows, ok := s.listByGroupData[groupID]; ok {
+		return rows, nil
+	}
+	return nil, nil
+}
+
+func (s *accountRepoStubForBulkUpdate) ListSchedulableUngroupedByPlatform(_ context.Context, _ string) ([]Account, error) {
+	return s.listData, nil
+}
+
 func (s *accountRepoStubForBulkUpdate) ListByGroup(_ context.Context, groupID int64) ([]Account, error) {
 	if err, ok := s.listByGroupErr[groupID]; ok {
 		return nil, err
@@ -164,6 +181,65 @@ func TestAdminService_BulkUpdateAccounts_AllSuccessIDs(t *testing.T) {
 	require.ElementsMatch(t, []int64{1, 2, 3}, result.SuccessIDs)
 	require.Empty(t, result.FailedIDs)
 	require.Len(t, result.Results, 3)
+}
+
+func TestAdminService_BulkUpdateAccounts_RejectsLegacyCodexAppServerScheduling(t *testing.T) {
+	repo := &accountRepoStubForBulkUpdate{
+		getByIDsAccounts: []*Account{{
+			ID:          1,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeOAuth,
+			Credentials: map[string]any{"auth_provider": "codex_app_server"},
+		}},
+	}
+	svc := &adminServiceImpl{accountRepo: repo}
+	schedulable := true
+
+	result, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		AccountIDs:  []int64{1},
+		Schedulable: &schedulable,
+	})
+
+	require.Nil(t, result)
+	requireApplicationErrorReason(t, err, "LEGACY_CODEX_APP_SERVER_NOT_SCHEDULABLE")
+	require.True(t, repo.getByIDsCalled)
+	require.Zero(t, repo.bulkUpdateCalls, "legacy credentials must be rejected before any write")
+}
+
+func TestAdminService_SetAccountSchedulable_RejectsLegacyCodexAppServerCredentials(t *testing.T) {
+	repo := &accountRepoStubForBulkUpdate{
+		getByIDAccounts: map[int64]*Account{1: {
+			ID:          1,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeOAuth,
+			Credentials: map[string]any{"auth_provider": "codex_app_server"},
+		}},
+	}
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	account, err := svc.SetAccountSchedulable(context.Background(), 1, true)
+
+	require.Nil(t, account)
+	requireApplicationErrorReason(t, err, "LEGACY_CODEX_APP_SERVER_NOT_SCHEDULABLE")
+	require.Empty(t, repo.setSchedulableCalls)
+}
+
+func TestAdminService_ListOpenAISchedulableAccountsForSchedulerScore_ExcludesLegacyCodexAppServerCredentials(t *testing.T) {
+	repo := &accountRepoStubForBulkUpdate{listData: []Account{
+		{
+			ID:          1,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeOAuth,
+			Credentials: map[string]any{"auth_provider": "codex_app_server"},
+		},
+		{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeOAuth},
+	}}
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	accounts, err := svc.ListOpenAISchedulableAccountsForSchedulerScore(context.Background(), nil)
+
+	require.NoError(t, err)
+	require.Equal(t, []Account{{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeOAuth}}, accounts)
 }
 
 func TestAdminService_BulkUpdateAccounts_RejectsRateChangeForSyncedAccounts(t *testing.T) {

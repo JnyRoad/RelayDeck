@@ -282,6 +282,7 @@ If you previously used an external payment service as an external payment system
 1. Enable payment in RelayDeck admin dashboard and configure providers (use the same payment credentials)
 2. Update webhook callback URLs to RelayDeck's callback endpoints
 3. Verify that new orders are processed correctly via built-in payment
-4. Decommission the external payment service
+4. Keep the external payment service available until historical-data access,
+   settlement, and callback-retention requirements have ended; then decommission it.
 
-> **Note**: Historical order data from the external payment service will not be automatically migrated. Keep that service running for a while to access historical records.
+> **Note**: Historical order data from the external payment service will not be automatically migrated. Confirm retention requirements before decommissioning it.

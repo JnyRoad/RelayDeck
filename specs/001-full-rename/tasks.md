@@ -17,7 +17,8 @@ validation covers backend, frontend, and the scoped source scan.
 - [X] T001 Inventory case-varied former-name occurrences in tracked code and
   configuration files under `backend/`, `frontend/`, `deploy/`, `.github/`,
   `skills/`, root Dockerfiles, Makefiles, manifests, and ignore files.
-- [X] T002 Record the canonical mapping and excluded historical/legal content in
+- [X] T002 Record the canonical mapping and full-repository documentation,
+  legal, and historical scope in
   `specs/001-full-rename/{spec.md,plan.md,research.md,data-model.md,contracts/breaking-identity-contract.md,quickstart.md}`.
 
 ---

@@ -26,7 +26,7 @@ container --version
 
 ```bash
 git clone https://github.com/JnyRoad/RelayDeck.git
-cd relaydeck/deploy
+cd RelayDeck/deploy
 
 # Creates .env with random PostgreSQL, JWT, and TOTP secrets.
 ./apple-container.sh init
@@ -100,7 +100,7 @@ export RELAYDECK_ENV_FILE=/absolute/path/to/relaydeck.env
 Apple-specific image overrides are available:
 
 ```dotenv
-APPLE_CONTAINER_RELAYDECK_IMAGE=JnyRoad/RelayDeck:latest
+APPLE_CONTAINER_RELAYDECK_IMAGE=jnyroad/relaydeck:latest
 APPLE_CONTAINER_POSTGRES_IMAGE=postgres:18-alpine
 APPLE_CONTAINER_REDIS_IMAGE=redis:8-alpine
 ```
@@ -175,7 +175,7 @@ To restore these backups into an existing stack, first ensure the image versions
 
 # Remove only the app container so a helper can mount its named volume.
 container delete relaydeck-apple
-RELAYDECK_IMAGE=JnyRoad/RelayDeck:latest # Match APPLE_CONTAINER_RELAYDECK_IMAGE in .env.
+RELAYDECK_IMAGE=jnyroad/relaydeck:latest # Match APPLE_CONTAINER_RELAYDECK_IMAGE in .env.
 container run --rm --name relaydeck-apple-data-restore \
   --entrypoint /bin/sh \
   --volume relaydeck-apple-data:/restore \

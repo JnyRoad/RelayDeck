@@ -6,8 +6,8 @@
 
 | 项目 | 说明 |
 |------|------|
-| **上游仓库** | JnyRoad/RelayDeck |
-| **Fork 仓库** | JnyRoad/RelayDeck |
+| **当前维护仓库** | JnyRoad/RelayDeck |
+| **上游来源仓库** | Wei-Shaw/sub2api |
 | **技术栈** | Go 后端 (Ent ORM + Gin) + Vue3 前端 (pnpm) |
 | **数据库** | PostgreSQL 16 + Redis |
 | **包管理** | 后端: go modules, 前端: **pnpm**（不是 npm） |
@@ -21,8 +21,8 @@
 | 端口 | 5432 |
 | psql 路径 | `C:\Program Files\PostgreSQL\16\bin\psql.exe` |
 | pg_hba.conf | `C:\Program Files\PostgreSQL\16\data\pg_hba.conf` |
-| 数据库凭据 | user=`relaydeck`, password=`relaydeck`, dbname=`relaydeck` |
-| 超级用户 | user=`postgres`, password=`postgres` |
+| 数据库凭据 | user=`relaydeck`, password=`<本地开发环境自行设置的密钥>`, dbname=`relaydeck` |
+| 超级用户 | user=`postgres`, password=`<PostgreSQL 安装时设置的密钥>` |
 
 ### Redis
 
@@ -148,8 +148,8 @@ psql -f "C:\temp.sql"
 3. 无密码登录并重置
    ```bash
    psql -U postgres -h 127.0.0.1
-   ALTER USER relaydeck WITH PASSWORD 'relaydeck';
-   ALTER USER postgres WITH PASSWORD 'postgres';
+   ALTER USER relaydeck WITH PASSWORD '<本地开发环境自行设置的密钥>';
+   ALTER USER postgres WITH PASSWORD '<PostgreSQL 安装时设置的密钥>';
    ```
 4. 改回 `scram-sha-256` 并重启
 
