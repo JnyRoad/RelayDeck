@@ -11,8 +11,8 @@ func TestModelCallTraceMigrationsBuildExistingTraceIndexesOnline(t *testing.T) {
 	schema, err := FS.ReadFile("232_model_call_trace_sessions_and_attempts.sql")
 	require.NoError(t, err)
 	schemaSQL := string(schema)
-	require.Contains(t, schemaSQL, "chk_model_call_trace_cleanup_runs_nonnegative")
-	require.Contains(t, schemaSQL, ")) NOT VALID;")
+	require.Regexp(t, `(?s)ADD CONSTRAINT chk_model_call_trace_cleanup_runs_nonnegative\s+CHECK \(deleted_traces >= 0 AND deleted_attempts >= 0 AND deleted_payloads >= 0 AND deleted_bytes >= 0\) NOT VALID;`, schemaSQL)
+	require.Regexp(t, `(?s)ADD CONSTRAINT chk_model_call_payloads_kind\s+CHECK \(kind IN \(.*?\)\) NOT VALID;`, schemaSQL)
 	require.NotContains(t, schemaSQL, "CREATE INDEX IF NOT EXISTS idx_model_call_traces_")
 
 	indexes, err := FS.ReadFile("233_add_model_call_trace_indexes_notx.sql")

@@ -90,6 +90,36 @@ describe('ModelTraceDetailDialog', () => {
     expect(wrapper.findAll('[data-testid^="trace-chat-turn-"]')).toHaveLength(1)
   })
 
+  it('does not render a stale payload after the dialog switches to another trace', async () => {
+    let resolvePayload: (value: unknown) => void = () => undefined
+    const pendingPayload = new Promise((resolve) => { resolvePayload = resolve })
+    getConversation.mockReset()
+      .mockResolvedValueOnce({
+        current_trace_id: 'trace-first',
+        linked: false,
+        link_source: '',
+        turns: [{ trace: { trace_id: 'trace-first' }, payloads: [{ kind: 'client_request', attempt_no: 0, content_status: 'available' }] }],
+      })
+      .mockResolvedValueOnce({
+        current_trace_id: 'trace-second',
+        linked: false,
+        link_source: '',
+        turns: [{ trace: { trace_id: 'trace-second' }, payloads: [{ kind: 'client_request', attempt_no: 0, content_status: 'not_captured' }] }],
+      })
+    getPayload.mockReset().mockReturnValueOnce(pendingPayload)
+
+    const wrapper = mountDialog('trace-first')
+    await flushPromises()
+    await wrapper.setProps({ traceId: 'trace-second' })
+    await flushPromises()
+
+    resolvePayload({ kind: 'client_request', attempt_no: 0, content_status: 'available', content: 'stale-first-payload' })
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('stale-first-payload')
+    expect(wrapper.text()).toContain('admin.modelTrace.detail.contentUnavailable{"status":"not_captured"}')
+  })
+
   it('renders retry attempts in raw order and only loads an upstream body when asked', async () => {
     const wrapper = mountDialog('trace-current')
     await flushPromises()

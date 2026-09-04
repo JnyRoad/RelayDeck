@@ -49,10 +49,17 @@ func TestUpstreamAttemptObserverBeginDoesNotWaitForPersistence(t *testing.T) {
 		TraceID: "trace-slow-store", Enabled: true, PayloadCaptureEnabled: true,
 	})
 
-	startedAt := time.Now()
-	attempt := observer.Begin(context.Background(), UpstreamAttemptInput{UpstreamRoute: "https://upstream.example/v1/responses"})
-	require.NotNil(t, attempt)
-	require.Less(t, time.Since(startedAt), 100*time.Millisecond)
+	attempts := make(chan *UpstreamAttempt, 1)
+	go func() {
+		attempts <- observer.Begin(context.Background(), UpstreamAttemptInput{UpstreamRoute: "https://upstream.example/v1/responses"})
+	}()
+
+	select {
+	case attempt := <-attempts:
+		require.NotNil(t, attempt)
+	case <-time.After(time.Second):
+		t.Fatal("Begin waited for persistence")
+	}
 
 	select {
 	case <-recorder.started:

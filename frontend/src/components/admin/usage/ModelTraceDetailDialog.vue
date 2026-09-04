@@ -99,15 +99,16 @@ const attemptPayloads = (attemptNo: number) => currentTurn.value?.payloads.filte
 const payloadContent = (traceID: string, payload: ModelTracePayload) => contents.value[payloadKey(traceID, payload)]?.content || ''
 
 /** Load one body only after the dialog is open and its metadata marks it readable. */
-const loadPayload = async (traceID: string, payload?: ModelTracePayload) => {
+const loadPayload = async (traceID: string, payload?: ModelTracePayload, expectedVersion = loadVersion) => {
   if (!payload || payload.content_status !== 'available') return
   const key = payloadKey(traceID, payload)
   if (contents.value[key]?.content !== undefined) return
   try {
     const loaded = await modelTraceAPI.getPayload(traceID, payload.kind, payload.attempt_no)
+    if (expectedVersion !== loadVersion) return
     contents.value = { ...contents.value, [key]: loaded }
   } catch {
-    errorMessage.value = t('admin.modelTrace.errors.detail')
+    if (expectedVersion === loadVersion) errorMessage.value = t('admin.modelTrace.errors.detail')
   }
 }
 
@@ -125,8 +126,8 @@ const loadConversation = async () => {
     if (version !== loadVersion) return
     conversation.value = result
     await Promise.all(result.turns.flatMap((turn) => [
-      loadPayload(turn.trace.trace_id, findPayload(turn, 'client_request')),
-      loadPayload(turn.trace.trace_id, findReplyPayload(turn)),
+      loadPayload(turn.trace.trace_id, findPayload(turn, 'client_request'), version),
+      loadPayload(turn.trace.trace_id, findReplyPayload(turn), version),
     ]))
   } catch {
     if (version === loadVersion) errorMessage.value = t('admin.modelTrace.errors.detail')
@@ -137,13 +138,14 @@ const loadConversation = async () => {
 
 /** Record a content-free copy event before placing the selected body on the clipboard. */
 const copyPayload = async (traceID: string, payload: ModelTracePayload) => {
+  const version = loadVersion
   const content = payloadContent(traceID, payload)
   if (!content || !navigator.clipboard) return
   try {
     await modelTraceAPI.recordAccessEvent(traceID, payload.kind, payload.attempt_no)
     await navigator.clipboard.writeText(content)
   } catch {
-    errorMessage.value = t('admin.modelTrace.errors.copy')
+    if (version === loadVersion) errorMessage.value = t('admin.modelTrace.errors.copy')
   }
 }
 

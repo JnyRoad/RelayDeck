@@ -1,6 +1,7 @@
 -- Online indexes for established model_call_traces rows.  The _notx suffix is
 -- required by the migration runner because CONCURRENTLY cannot run in a SQL
--- transaction.  Each statement remains independently idempotent.
+-- transaction.  Each statement remains independently idempotent. The runner
+-- drops any invalid or unready partial index with these names before retrying.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_model_call_traces_session_created
     ON model_call_traces(session_id, created_at ASC, id ASC)
     WHERE session_id <> '';
