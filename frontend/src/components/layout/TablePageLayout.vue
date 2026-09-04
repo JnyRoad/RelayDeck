@@ -1,5 +1,5 @@
 <template>
-  <div class="table-page-layout" :class="{ 'mobile-mode': isMobile }">
+  <div class="table-page-layout" :class="{ 'mobile-mode': isMobile, 'embedded-mode': embedded }">
     <!-- 固定区域：操作按钮 -->
     <div v-if="$slots.actions" class="layout-section-fixed">
       <slot name="actions" />
@@ -27,6 +27,10 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 
+defineProps<{
+  embedded?: boolean
+}>()
+
 const isMobile = ref(false)
 
 const checkMobile = () => {
@@ -48,6 +52,10 @@ onUnmounted(() => {
 .table-page-layout {
   @apply flex flex-col gap-6;
   height: calc(100vh - 64px - 4rem); /* 减去 header + lg:p-8 的上下padding */
+}
+
+.table-page-layout.embedded-mode {
+  height: min(68vh, 760px);
 }
 
 .layout-section-fixed {
