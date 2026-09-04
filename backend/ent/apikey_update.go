@@ -120,6 +120,33 @@ func (_u *APIKeyUpdate) ClearGroupID() *APIKeyUpdate {
 	return _u
 }
 
+// SetIdempotencyRecordID sets the "idempotency_record_id" field.
+func (_u *APIKeyUpdate) SetIdempotencyRecordID(v int64) *APIKeyUpdate {
+	_u.mutation.ResetIdempotencyRecordID()
+	_u.mutation.SetIdempotencyRecordID(v)
+	return _u
+}
+
+// SetNillableIdempotencyRecordID sets the "idempotency_record_id" field if the given value is not nil.
+func (_u *APIKeyUpdate) SetNillableIdempotencyRecordID(v *int64) *APIKeyUpdate {
+	if v != nil {
+		_u.SetIdempotencyRecordID(*v)
+	}
+	return _u
+}
+
+// AddIdempotencyRecordID adds value to the "idempotency_record_id" field.
+func (_u *APIKeyUpdate) AddIdempotencyRecordID(v int64) *APIKeyUpdate {
+	_u.mutation.AddIdempotencyRecordID(v)
+	return _u
+}
+
+// ClearIdempotencyRecordID clears the value of the "idempotency_record_id" field.
+func (_u *APIKeyUpdate) ClearIdempotencyRecordID() *APIKeyUpdate {
+	_u.mutation.ClearIdempotencyRecordID()
+	return _u
+}
+
 // SetStatus sets the "status" field.
 func (_u *APIKeyUpdate) SetStatus(v string) *APIKeyUpdate {
 	_u.mutation.SetStatus(v)
@@ -593,6 +620,15 @@ func (_u *APIKeyUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.Name(); ok {
 		_spec.SetField(apikey.FieldName, field.TypeString, value)
 	}
+	if value, ok := _u.mutation.IdempotencyRecordID(); ok {
+		_spec.SetField(apikey.FieldIdempotencyRecordID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedIdempotencyRecordID(); ok {
+		_spec.AddField(apikey.FieldIdempotencyRecordID, field.TypeInt64, value)
+	}
+	if _u.mutation.IdempotencyRecordIDCleared() {
+		_spec.ClearField(apikey.FieldIdempotencyRecordID, field.TypeInt64)
+	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(apikey.FieldStatus, field.TypeString, value)
 	}
@@ -904,6 +940,33 @@ func (_u *APIKeyUpdateOne) SetNillableGroupID(v *int64) *APIKeyUpdateOne {
 // ClearGroupID clears the value of the "group_id" field.
 func (_u *APIKeyUpdateOne) ClearGroupID() *APIKeyUpdateOne {
 	_u.mutation.ClearGroupID()
+	return _u
+}
+
+// SetIdempotencyRecordID sets the "idempotency_record_id" field.
+func (_u *APIKeyUpdateOne) SetIdempotencyRecordID(v int64) *APIKeyUpdateOne {
+	_u.mutation.ResetIdempotencyRecordID()
+	_u.mutation.SetIdempotencyRecordID(v)
+	return _u
+}
+
+// SetNillableIdempotencyRecordID sets the "idempotency_record_id" field if the given value is not nil.
+func (_u *APIKeyUpdateOne) SetNillableIdempotencyRecordID(v *int64) *APIKeyUpdateOne {
+	if v != nil {
+		_u.SetIdempotencyRecordID(*v)
+	}
+	return _u
+}
+
+// AddIdempotencyRecordID adds value to the "idempotency_record_id" field.
+func (_u *APIKeyUpdateOne) AddIdempotencyRecordID(v int64) *APIKeyUpdateOne {
+	_u.mutation.AddIdempotencyRecordID(v)
+	return _u
+}
+
+// ClearIdempotencyRecordID clears the value of the "idempotency_record_id" field.
+func (_u *APIKeyUpdateOne) ClearIdempotencyRecordID() *APIKeyUpdateOne {
+	_u.mutation.ClearIdempotencyRecordID()
 	return _u
 }
 
@@ -1409,6 +1472,15 @@ func (_u *APIKeyUpdateOne) sqlSave(ctx context.Context) (_node *APIKey, err erro
 	}
 	if value, ok := _u.mutation.Name(); ok {
 		_spec.SetField(apikey.FieldName, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.IdempotencyRecordID(); ok {
+		_spec.SetField(apikey.FieldIdempotencyRecordID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedIdempotencyRecordID(); ok {
+		_spec.AddField(apikey.FieldIdempotencyRecordID, field.TypeInt64, value)
+	}
+	if _u.mutation.IdempotencyRecordIDCleared() {
+		_spec.ClearField(apikey.FieldIdempotencyRecordID, field.TypeInt64)
 	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(apikey.FieldStatus, field.TypeString, value)

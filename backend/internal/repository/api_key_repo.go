@@ -43,6 +43,17 @@ func (r *apiKeyRepository) activeQuery() *dbent.APIKeyQuery {
 }
 
 func (r *apiKeyRepository) Create(ctx context.Context, key *service.APIKey) error {
+	return r.create(ctx, key, nil)
+}
+
+// CreateWithIdempotencyRecord atomically persists a Key and its owning
+// idempotency-record reference. That reference lets a reclaimed idempotent
+// request return the original Key instead of creating another one.
+func (r *apiKeyRepository) CreateWithIdempotencyRecord(ctx context.Context, key *service.APIKey, recordID int64) error {
+	return r.create(ctx, key, &recordID)
+}
+
+func (r *apiKeyRepository) create(ctx context.Context, key *service.APIKey, idempotencyRecordID *int64) error {
 	builder := r.client.APIKey.Create().
 		SetUserID(key.UserID).
 		SetKey(key.Key).
@@ -56,6 +67,9 @@ func (r *apiKeyRepository) Create(ctx context.Context, key *service.APIKey) erro
 		SetRateLimit5h(key.RateLimit5h).
 		SetRateLimit1d(key.RateLimit1d).
 		SetRateLimit7d(key.RateLimit7d)
+	if idempotencyRecordID != nil {
+		builder.SetIdempotencyRecordID(*idempotencyRecordID)
+	}
 
 	if len(key.IPWhitelist) > 0 {
 		builder.SetIPWhitelist(key.IPWhitelist)
@@ -72,6 +86,24 @@ func (r *apiKeyRepository) Create(ctx context.Context, key *service.APIKey) erro
 		key.UpdatedAt = created.UpdatedAt
 	}
 	return translatePersistenceError(err, nil, service.ErrAPIKeyExists)
+}
+
+func (r *apiKeyRepository) GetByIdempotencyRecordID(ctx context.Context, recordID int64) (*service.APIKey, error) {
+	if recordID <= 0 {
+		return nil, nil
+	}
+	m, err := r.activeQuery().
+		Where(apikey.IdempotencyRecordIDEQ(recordID)).
+		WithUser().
+		WithGroup().
+		Only(ctx)
+	if err != nil {
+		if dbent.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return apiKeyEntityToService(m), nil
 }
 
 func (r *apiKeyRepository) GetByID(ctx context.Context, id int64) (*service.APIKey, error) {

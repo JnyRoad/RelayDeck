@@ -29,6 +29,8 @@ const (
 	FieldName = "name"
 	// FieldGroupID holds the string denoting the group_id field in the database.
 	FieldGroupID = "group_id"
+	// FieldIdempotencyRecordID holds the string denoting the idempotency_record_id field in the database.
+	FieldIdempotencyRecordID = "idempotency_record_id"
 	// FieldStatus holds the string denoting the status field in the database.
 	FieldStatus = "status"
 	// FieldLastUsedAt holds the string denoting the last_used_at field in the database.
@@ -102,6 +104,7 @@ var Columns = []string{
 	FieldKey,
 	FieldName,
 	FieldGroupID,
+	FieldIdempotencyRecordID,
 	FieldStatus,
 	FieldLastUsedAt,
 	FieldIPWhitelist,
@@ -211,6 +214,11 @@ func ByName(opts ...sql.OrderTermOption) OrderOption {
 // ByGroupID orders the results by the group_id field.
 func ByGroupID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldGroupID, opts...).ToFunc()
+}
+
+// ByIdempotencyRecordID orders the results by the idempotency_record_id field.
+func ByIdempotencyRecordID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldIdempotencyRecordID, opts...).ToFunc()
 }
 
 // ByStatus orders the results by the status field.

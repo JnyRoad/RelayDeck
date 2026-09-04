@@ -636,11 +636,6 @@ func (h *DashboardHandler) GetBatchAPIKeysUsage(c *gin.Context) {
 		return
 	}
 
-	apiKeyIDs := normalizeInt64IDList(req.APIKeyIDs)
-	if len(apiKeyIDs) == 0 {
-		response.Success(c, gin.H{"stats": map[string]any{}})
-		return
-	}
 	targetUserID := int64(0)
 	if req.TargetUserID != nil {
 		if *req.TargetUserID <= 0 {
@@ -649,6 +644,11 @@ func (h *DashboardHandler) GetBatchAPIKeysUsage(c *gin.Context) {
 		}
 		targetUserID = *req.TargetUserID
 		middleware.SetAuditExtra(c, map[string]any{"target_user_id": targetUserID})
+	}
+	apiKeyIDs := normalizeInt64IDList(req.APIKeyIDs)
+	if len(apiKeyIDs) == 0 {
+		response.Success(c, gin.H{"stats": map[string]any{}})
+		return
 	}
 
 	keyRaw, _ := json.Marshal(struct {

@@ -156,6 +156,23 @@ func TestDashboardAPIKeysUsageForwardsTargetUserScope(t *testing.T) {
 	require.Equal(t, int64(42), repo.batchTargetUserID)
 }
 
+func TestDashboardAPIKeysUsageRejectsInvalidTargetUserBeforeEmptyKeyShortCircuit(t *testing.T) {
+	repo := &dashboardUsageRepoCapture{}
+	router := newDashboardRequestTypeTestRouter(repo)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/admin/dashboard/api-keys-usage",
+		bytes.NewBufferString(`{"api_key_ids":[0],"target_user_id":0}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Empty(t, repo.batchAPIKeyIDs)
+}
+
 func TestDashboardTrendRequestTypePriority(t *testing.T) {
 	repo := &dashboardUsageRepoCapture{}
 	router := newDashboardRequestTypeTestRouter(repo)

@@ -90,6 +90,11 @@ func GroupID(v int64) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldGroupID, v))
 }
 
+// IdempotencyRecordID applies equality check predicate on the "idempotency_record_id" field. It's identical to IdempotencyRecordIDEQ.
+func IdempotencyRecordID(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldIdempotencyRecordID, v))
+}
+
 // Status applies equality check predicate on the "status" field. It's identical to StatusEQ.
 func Status(v string) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldStatus, v))
@@ -468,6 +473,56 @@ func GroupIDIsNil() predicate.APIKey {
 // GroupIDNotNil applies the NotNil predicate on the "group_id" field.
 func GroupIDNotNil() predicate.APIKey {
 	return predicate.APIKey(sql.FieldNotNull(FieldGroupID))
+}
+
+// IdempotencyRecordIDEQ applies the EQ predicate on the "idempotency_record_id" field.
+func IdempotencyRecordIDEQ(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldIdempotencyRecordID, v))
+}
+
+// IdempotencyRecordIDNEQ applies the NEQ predicate on the "idempotency_record_id" field.
+func IdempotencyRecordIDNEQ(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNEQ(FieldIdempotencyRecordID, v))
+}
+
+// IdempotencyRecordIDIn applies the In predicate on the "idempotency_record_id" field.
+func IdempotencyRecordIDIn(vs ...int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldIn(FieldIdempotencyRecordID, vs...))
+}
+
+// IdempotencyRecordIDNotIn applies the NotIn predicate on the "idempotency_record_id" field.
+func IdempotencyRecordIDNotIn(vs ...int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNotIn(FieldIdempotencyRecordID, vs...))
+}
+
+// IdempotencyRecordIDGT applies the GT predicate on the "idempotency_record_id" field.
+func IdempotencyRecordIDGT(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldGT(FieldIdempotencyRecordID, v))
+}
+
+// IdempotencyRecordIDGTE applies the GTE predicate on the "idempotency_record_id" field.
+func IdempotencyRecordIDGTE(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldGTE(FieldIdempotencyRecordID, v))
+}
+
+// IdempotencyRecordIDLT applies the LT predicate on the "idempotency_record_id" field.
+func IdempotencyRecordIDLT(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldLT(FieldIdempotencyRecordID, v))
+}
+
+// IdempotencyRecordIDLTE applies the LTE predicate on the "idempotency_record_id" field.
+func IdempotencyRecordIDLTE(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldLTE(FieldIdempotencyRecordID, v))
+}
+
+// IdempotencyRecordIDIsNil applies the IsNil predicate on the "idempotency_record_id" field.
+func IdempotencyRecordIDIsNil() predicate.APIKey {
+	return predicate.APIKey(sql.FieldIsNull(FieldIdempotencyRecordID))
+}
+
+// IdempotencyRecordIDNotNil applies the NotNil predicate on the "idempotency_record_id" field.
+func IdempotencyRecordIDNotNil() predicate.APIKey {
+	return predicate.APIKey(sql.FieldNotNull(FieldIdempotencyRecordID))
 }
 
 // StatusEQ applies the EQ predicate on the "status" field.

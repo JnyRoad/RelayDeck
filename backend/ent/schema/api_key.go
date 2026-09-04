@@ -44,6 +44,13 @@ func (APIKey) Fields() []ent.Field {
 		field.Int64("group_id").
 			Optional().
 			Nillable(),
+		// Links a Key created by an idempotent operation to the durable claim
+		// that owns it. It deliberately has no foreign key because idempotency
+		// records expire while API Keys remain valid.
+		field.Int64("idempotency_record_id").
+			Optional().
+			Nillable().
+			Unique(),
 		field.String("status").
 			MaxLen(20).
 			Default(domain.StatusActive),

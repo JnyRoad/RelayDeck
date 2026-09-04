@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JnyRoad/RelayDeck/internal/config"
+	infraerrors "github.com/JnyRoad/RelayDeck/internal/pkg/errors"
 	"github.com/JnyRoad/RelayDeck/internal/pkg/pagination"
 	"github.com/stretchr/testify/require"
 )
@@ -45,12 +47,37 @@ type apiKeyRepoStub struct {
 	updateLastUsed         func(ctx context.Context, id int64, usedAt time.Time) error
 	touchedIDs             []int64
 	touchedUsedAts         []time.Time
+	idempotencyKeys        map[int64]*APIKey
+	idempotencyCreateCalls int
 }
 
 // 以下方法在本测试中不应被调用，使用 panic 确保测试失败时能快速定位问题
 
 func (s *apiKeyRepoStub) Create(ctx context.Context, key *APIKey) error {
 	panic("unexpected Create call")
+}
+
+func (s *apiKeyRepoStub) CreateWithIdempotencyRecord(_ context.Context, key *APIKey, recordID int64) error {
+	if s.idempotencyKeys == nil {
+		s.idempotencyKeys = make(map[int64]*APIKey)
+	}
+	if _, exists := s.idempotencyKeys[recordID]; exists {
+		return errors.New("duplicate idempotency record")
+	}
+	key.ID = int64(len(s.idempotencyKeys) + 1)
+	stored := *key
+	s.idempotencyKeys[recordID] = &stored
+	s.idempotencyCreateCalls++
+	return nil
+}
+
+func (s *apiKeyRepoStub) GetByIdempotencyRecordID(_ context.Context, recordID int64) (*APIKey, error) {
+	key := s.idempotencyKeys[recordID]
+	if key == nil {
+		return nil, nil
+	}
+	cloned := *key
+	return &cloned, nil
 }
 
 func (s *apiKeyRepoStub) GetByID(ctx context.Context, id int64) (*APIKey, error) {
@@ -230,6 +257,46 @@ func (s *apiKeyRepoStub) ResetRateLimitWindows(ctx context.Context, id int64) er
 
 func (s *apiKeyRepoStub) GetRateLimitData(ctx context.Context, id int64) (*APIKeyRateLimitData, error) {
 	panic("unexpected GetRateLimitData call")
+}
+
+func TestAPIKeyService_CreateRecoversAfterIdempotencyFinalizationFailure(t *testing.T) {
+	idempotencyRepo := &markBehaviorRepo{inMemoryIdempotencyRepo: *newInMemoryIdempotencyRepo(), failMarkSucceeded: true}
+	coordinator := NewIdempotencyCoordinator(idempotencyRepo, DefaultIdempotencyConfig())
+	keyRepo := &apiKeyRepoStub{}
+	userRepo := &mockUserRepo{getByIDUser: &User{ID: 7, Status: StatusActive}}
+	apiKeyService := NewAPIKeyService(keyRepo, userRepo, nil, nil, nil, nil, &config.Config{})
+	opts := IdempotencyExecuteOptions{
+		Scope:          "admin.users.api_key.create",
+		IdempotencyKey: "key-create-finalization-gap",
+		Method:         "POST",
+		Route:          "/api/v1/admin/users/7/api-keys",
+		ActorScope:     "admin:1",
+		Payload:        map[string]any{"user_id": 7, "name": "recovered"},
+	}
+	execute := func(ctx context.Context) (any, error) {
+		return apiKeyService.Create(ctx, 7, CreateAPIKeyRequest{Name: "recovered"})
+	}
+
+	_, err := coordinator.Execute(context.Background(), opts, execute)
+	require.Error(t, err)
+	require.Equal(t, infraerrors.Code(ErrIdempotencyStoreUnavail), infraerrors.Code(err))
+	require.Equal(t, 1, keyRepo.idempotencyCreateCalls)
+
+	idempotencyRepo.mu.Lock()
+	for _, record := range idempotencyRepo.data {
+		past := time.Now().Add(-time.Second)
+		record.LockedUntil = &past
+		record.ExpiresAt = past
+	}
+	idempotencyRepo.mu.Unlock()
+	idempotencyRepo.failMarkSucceeded = false
+
+	result, err := coordinator.Execute(context.Background(), opts, execute)
+	require.NoError(t, err)
+	created, ok := result.Data.(*APIKey)
+	require.True(t, ok)
+	require.Equal(t, int64(1), created.ID)
+	require.Equal(t, 1, keyRepo.idempotencyCreateCalls)
 }
 
 // apiKeyCacheStub 是 APIKeyCache 接口的测试桩实现。

@@ -7,7 +7,7 @@
         "rule": "gray-on-color",
         "value": "*",
         "files": [
-          "/Users/lvtu/.codex/worktrees/c625/RelayDeck/frontend/src/views/user/KeysView.vue"
+          "frontend/src/views/user/KeysView.vue"
         ],
         "createdAt": "2026-09-04T09:44:23.146Z",
         "reason": "Codex triage: lines 379, 388, 399, 400, and 418 use gray only at rest; every colored hover background switches the text to a matching non-gray color."

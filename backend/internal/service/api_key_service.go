@@ -125,6 +125,14 @@ type apiKeyAllByUserIDLister interface {
 	ListAllByUserID(ctx context.Context, userID int64, filters APIKeyListFilters) ([]APIKey, error)
 }
 
+// apiKeyIdempotencyRepository binds a newly created Key to its idempotency
+// record in the same INSERT. A retry can then recover that Key if the process
+// stopped after the INSERT but before the idempotency response was finalized.
+type apiKeyIdempotencyRepository interface {
+	CreateWithIdempotencyRecord(ctx context.Context, key *APIKey, recordID int64) error
+	GetByIdempotencyRecordID(ctx context.Context, recordID int64) (*APIKey, error)
+}
+
 // APIKeyRateLimitData holds rate limit usage and window state for an API key.
 type APIKeyRateLimitData struct {
 	Usage5h       float64
@@ -459,6 +467,30 @@ func (s *APIKeyService) canUserBindGroup(ctx context.Context, user *User, group 
 
 // Create 创建API Key
 func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIKeyRequest) (*APIKey, error) {
+	idempotencyRecordID, idempotent := IdempotencyRecordIDFromContext(ctx)
+	if idempotent {
+		repo, ok := s.apiKeyRepo.(apiKeyIdempotencyRepository)
+		if !ok {
+			return nil, fmt.Errorf("idempotent API key creation is not supported by the repository")
+		}
+		existing, err := repo.GetByIdempotencyRecordID(ctx, idempotencyRecordID)
+		if err != nil {
+			return nil, fmt.Errorf("get idempotent api key: %w", err)
+		}
+		if existing != nil {
+			if existing.UserID != userID {
+				return nil, fmt.Errorf("idempotency record belongs to a different user")
+			}
+			s.InvalidateAuthCacheByKey(ctx, existing.Key)
+			s.compileAPIKeyIPRules(existing)
+			return existing, nil
+		}
+	}
+
+	return s.create(ctx, userID, req, idempotencyRecordID)
+}
+
+func (s *APIKeyService) create(ctx context.Context, userID int64, req CreateAPIKeyRequest, idempotencyRecordID int64) (*APIKey, error) {
 	if err := validateCreateAPIKeyRequest(req); err != nil {
 		return nil, err
 	}
@@ -552,7 +584,15 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 		apiKey.ExpiresAt = &expiresAt
 	}
 
-	if err := s.apiKeyRepo.Create(ctx, apiKey); err != nil {
+	if idempotencyRecordID > 0 {
+		repo, ok := s.apiKeyRepo.(apiKeyIdempotencyRepository)
+		if !ok {
+			return nil, fmt.Errorf("idempotent API key creation is not supported by the repository")
+		}
+		if err := repo.CreateWithIdempotencyRecord(ctx, apiKey, idempotencyRecordID); err != nil {
+			return nil, fmt.Errorf("create api key: %w", err)
+		}
+	} else if err := s.apiKeyRepo.Create(ctx, apiKey); err != nil {
 		return nil, fmt.Errorf("create api key: %w", err)
 	}
 
