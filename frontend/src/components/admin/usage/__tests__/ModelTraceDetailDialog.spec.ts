@@ -131,11 +131,26 @@ describe('ModelTraceDetailDialog', () => {
     expect(raw.text().indexOf('account-first')).toBeLessThan(raw.text().indexOf('account-second'))
     expect(raw.text().indexOf('account-second')).toBeLessThan(raw.text().indexOf('trace-current-client_response'))
     expect(raw.text()).toContain('attempt-one-hash')
+    expect(raw.text()).not.toContain('admin.modelTrace.detail.contentUnavailable{"status":"available"}')
     expect(getPayload).not.toHaveBeenCalled()
 
     await raw.findAll('button').find((button) => button.text().includes('admin.modelTrace.detail.loadBody'))!.trigger('click')
     await flushPromises()
     expect(getPayload).toHaveBeenCalledWith('trace-current', 'upstream_request', 1)
+  })
+
+  it('keeps the replay visible when a lazy raw payload load fails', async () => {
+    const wrapper = mountDialog('trace-current')
+    await flushPromises()
+    getPayload.mockReset().mockRejectedValueOnce(new Error('payload request failed'))
+
+    await wrapper.get('[data-testid="model-trace-view-raw"]').trigger('click')
+    const raw = wrapper.get('[data-testid="model-trace-raw-chain"]')
+    await raw.findAll('button').find((button) => button.text().includes('admin.modelTrace.detail.loadBody'))!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="model-trace-raw-chain"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('admin.modelTrace.errors.detail')
   })
 
   it('shows a terminal unavailable status instead of a loading label', async () => {

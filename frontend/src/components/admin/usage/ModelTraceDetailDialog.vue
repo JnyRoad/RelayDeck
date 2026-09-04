@@ -32,8 +32,8 @@
             <span class="font-mono">{{ turn.trace.trace_id }}</span>
             <span v-if="turn.trace.trace_id === conversation.current_trace_id" class="rounded bg-teal-600 px-1.5 py-0.5 font-medium text-white">{{ t('admin.modelTrace.detail.currentTurn') }}</span>
           </div>
-          <TraceBubble :label="t('admin.modelTrace.detail.user')" :trace-id="turn.trace.trace_id" :payload="findPayload(turn, 'client_request')" align="right" @copy="copyPayload(turn.trace.trace_id, $event)" />
-          <TraceBubble :label="t('admin.modelTrace.detail.model')" :trace-id="turn.trace.trace_id" :payload="findReplyPayload(turn)" align="left" @copy="copyPayload(turn.trace.trace_id, $event)" />
+          <TraceBubble :label="t('admin.modelTrace.detail.user')" :trace-id="turn.trace.trace_id" :payload="findPayload(turn, 'client_request')" :load-failed="payloadLoadFailed(turn.trace.trace_id, findPayload(turn, 'client_request'))" align="right" @copy="copyPayload(turn.trace.trace_id, $event)" />
+          <TraceBubble :label="t('admin.modelTrace.detail.model')" :trace-id="turn.trace.trace_id" :payload="findReplyPayload(turn)" :load-failed="payloadLoadFailed(turn.trace.trace_id, findReplyPayload(turn))" align="left" @copy="copyPayload(turn.trace.trace_id, $event)" />
         </article>
       </section>
 
@@ -42,16 +42,16 @@
           <div class="rounded-lg border border-slate-700 bg-slate-900/80 p-3 text-slate-300">
             <p>{{ currentTurn.trace.route }} · {{ currentTurn.trace.requested_model || currentTurn.trace.response_model || '—' }}</p>
           </div>
-          <TraceRawPayload v-for="payload in rootClientRequestPayloads" :key="payloadKey(currentTurn.trace.trace_id, payload)" :payload="payload" :content="payloadContent(currentTurn.trace.trace_id, payload)" @load="loadPayload(currentTurn.trace.trace_id, payload)" @copy="copyPayload(currentTurn.trace.trace_id, payload)" />
+          <TraceRawPayload v-for="payload in rootClientRequestPayloads" :key="payloadKey(currentTurn.trace.trace_id, payload)" :payload="payload" :content="payloadContent(currentTurn.trace.trace_id, payload)" :load-failed="payloadLoadFailed(currentTurn.trace.trace_id, payload)" @load="loadPayload(currentTurn.trace.trace_id, payload)" @copy="copyPayload(currentTurn.trace.trace_id, payload)" />
           <article v-for="attempt in currentTurn.attempts" :key="attempt.attempt_no" class="rounded-lg border border-slate-700 bg-slate-900/70 p-3">
             <div class="mb-2 flex flex-wrap items-center justify-between gap-2 text-slate-300">
               <span>{{ t('admin.modelTrace.detail.attempt', { number: attempt.attempt_no }) }} · {{ attempt.outcome }} · {{ attempt.status_code ?? '—' }}</span>
               <span>{{ attempt.account_snapshot || '—' }} · {{ attempt.upstream_model || '—' }}</span>
             </div>
             <p class="mb-3 break-all text-slate-500">{{ attempt.upstream_route || '—' }}</p>
-            <TraceRawPayload v-for="payload in attemptPayloads(attempt.attempt_no)" :key="payloadKey(currentTurn.trace.trace_id, payload)" :payload="payload" :content="payloadContent(currentTurn.trace.trace_id, payload)" @load="loadPayload(currentTurn.trace.trace_id, payload)" @copy="copyPayload(currentTurn.trace.trace_id, payload)" />
+            <TraceRawPayload v-for="payload in attemptPayloads(attempt.attempt_no)" :key="payloadKey(currentTurn.trace.trace_id, payload)" :payload="payload" :content="payloadContent(currentTurn.trace.trace_id, payload)" :load-failed="payloadLoadFailed(currentTurn.trace.trace_id, payload)" @load="loadPayload(currentTurn.trace.trace_id, payload)" @copy="copyPayload(currentTurn.trace.trace_id, payload)" />
           </article>
-          <TraceRawPayload v-for="payload in rootClientResultPayloads" :key="payloadKey(currentTurn.trace.trace_id, payload)" :payload="payload" :content="payloadContent(currentTurn.trace.trace_id, payload)" @load="loadPayload(currentTurn.trace.trace_id, payload)" @copy="copyPayload(currentTurn.trace.trace_id, payload)" />
+          <TraceRawPayload v-for="payload in rootClientResultPayloads" :key="payloadKey(currentTurn.trace.trace_id, payload)" :payload="payload" :content="payloadContent(currentTurn.trace.trace_id, payload)" :load-failed="payloadLoadFailed(currentTurn.trace.trace_id, payload)" @load="loadPayload(currentTurn.trace.trace_id, payload)" @copy="copyPayload(currentTurn.trace.trace_id, payload)" />
         </template>
       </section>
     </div>
@@ -74,6 +74,7 @@ const loading = ref(false)
 const errorMessage = ref('')
 const activeView = ref<'chat' | 'raw'>('chat')
 const contents = ref<Record<string, ModelTracePayload>>({})
+const payloadErrorKeys = ref<Record<string, true>>({})
 let loadVersion = 0
 
 /** Derive a stable browser-only lookup key for one selected trace payload. */
@@ -98,17 +99,25 @@ const attemptPayloads = (attemptNo: number) => currentTurn.value?.payloads.filte
 /** Read a previously selected body without mutating metadata returned by list/detail APIs. */
 const payloadContent = (traceID: string, payload: ModelTracePayload) => contents.value[payloadKey(traceID, payload)]?.content || ''
 
+/** Keep a lazy-load failure local to its body so the rest of the replay remains visible. */
+const payloadLoadFailed = (traceID: string, payload?: ModelTracePayload) => Boolean(payload && payloadErrorKeys.value[payloadKey(traceID, payload)])
+
 /** Load one body only after the dialog is open and its metadata marks it readable. */
 const loadPayload = async (traceID: string, payload?: ModelTracePayload, expectedVersion = loadVersion) => {
   if (!payload || payload.content_status !== 'available') return
   const key = payloadKey(traceID, payload)
   if (contents.value[key]?.content !== undefined) return
+  if (payloadErrorKeys.value[key]) {
+    const remaining = { ...payloadErrorKeys.value }
+    delete remaining[key]
+    payloadErrorKeys.value = remaining
+  }
   try {
     const loaded = await modelTraceAPI.getPayload(traceID, payload.kind, payload.attempt_no)
     if (expectedVersion !== loadVersion) return
     contents.value = { ...contents.value, [key]: loaded }
   } catch {
-    if (expectedVersion === loadVersion) errorMessage.value = t('admin.modelTrace.errors.detail')
+    if (expectedVersion === loadVersion) payloadErrorKeys.value = { ...payloadErrorKeys.value, [key]: true }
   }
 }
 
@@ -120,6 +129,7 @@ const loadConversation = async () => {
   errorMessage.value = ''
   conversation.value = null
   contents.value = {}
+  payloadErrorKeys.value = {}
   activeView.value = 'chat'
   try {
     const result = await modelTraceAPI.getConversation(props.traceId)
@@ -154,6 +164,7 @@ const close = () => {
   loadVersion++
   conversation.value = null
   contents.value = {}
+  payloadErrorKeys.value = {}
   emit('close')
 }
 
@@ -167,6 +178,7 @@ const TraceBubble = defineComponent({
     label: { type: String, required: true },
     traceId: { type: String, required: true },
     payload: { type: Object as PropType<ModelTracePayload | undefined>, default: undefined },
+    loadFailed: { type: Boolean, default: false },
     align: { type: String as PropType<'left' | 'right'>, required: true },
   },
   emits: ['copy'],
@@ -177,7 +189,9 @@ const TraceBubble = defineComponent({
         componentProps.payload
           ? h('div', { class: 'space-y-2' }, [
             h('pre', { class: 'whitespace-pre-wrap break-words font-sans text-sm leading-6' }, payloadContent(componentProps.traceId, componentProps.payload)
-              || (componentProps.payload.content_status === 'available'
+              || (componentProps.loadFailed
+                ? t('admin.modelTrace.errors.detail')
+                : componentProps.payload.content_status === 'available'
                 ? t('admin.modelTrace.detail.loadingBody')
                 : t('admin.modelTrace.detail.contentUnavailable', { status: componentProps.payload.content_status }))),
             payloadContent(componentProps.traceId, componentProps.payload) ? h('button', { type: 'button', class: 'text-xs underline underline-offset-2 opacity-80 hover:opacity-100', onClick: () => emit('copy', componentProps.payload) }, t('common.copy')) : null,
@@ -193,6 +207,7 @@ const TraceRawPayload = defineComponent({
   props: {
     payload: { type: Object as PropType<ModelTracePayload>, required: true },
     content: { type: String, default: '' },
+    loadFailed: { type: Boolean, default: false },
   },
   emits: ['load', 'copy'],
   setup(componentProps, { emit }) {
@@ -211,7 +226,11 @@ const TraceRawPayload = defineComponent({
       })),
       componentProps.content
         ? h('pre', { class: 'max-h-80 overflow-auto whitespace-pre-wrap break-words text-slate-100' }, componentProps.content)
-        : h('p', { class: 'text-slate-500' }, t('admin.modelTrace.detail.contentUnavailable', { status: componentProps.payload.content_status })),
+        : h('p', { class: 'text-slate-500' }, componentProps.loadFailed
+          ? t('admin.modelTrace.errors.detail')
+          : componentProps.payload.content_status === 'available'
+            ? t('admin.modelTrace.detail.loadBody')
+            : t('admin.modelTrace.detail.contentUnavailable', { status: componentProps.payload.content_status })),
     ])
   },
 })
