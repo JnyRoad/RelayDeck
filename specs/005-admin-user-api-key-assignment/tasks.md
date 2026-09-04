@@ -9,9 +9,9 @@
 **Goal**: Expose `/keys`-equivalent operations for one explicit target user while retaining `APIKeyService` ownership and validation semantics.
 
 - [x] T001 [US1] Add focused failing tests in `backend/internal/handler/admin/user_api_key_handler_test.go` for list filters, create, idempotent create retries for one administrator and target user, update/reset, delete, unavailable target user and cross-user Key rejection.
-- [x] T002 [US1] Run `cd backend && go test ./internal/handler/admin -run 'TestAdminUserAPIKey' -count=1` and record the expected failing missing-handler/route result. Observed 2026-09-04: `SetAPIKeyManager` and the five target-user handler methods are undefined.
-- [x] T003 [US1] Add a narrow target-user Key manager interface, a compatible `SetAPIKeyManager` injection point, request mapping and handlers in `backend/internal/handler/admin/user_handler.go`; use existing `service.APIKeyService` methods with `:id` as the target user ID and preserve their validation and ownership failures.
-- [x] T004 [US1] Inject `APIKeyService` through the new compatible setter in `backend/cmd/server/wire_gen.go`, register GET/POST/PUT/DELETE and group/rate routes in `backend/internal/server/routes/admin.go`, and add non-secret audit action mappings in `backend/internal/server/middleware/audit_log.go`.
+- [x] T002 [US1] Run `cd backend && go test ./internal/handler/admin -run 'TestAdminUserAPIKey' -count=1` and record the expected failing missing-handler/route result.
+- [x] T003 [US1] Add a narrow target-user Key manager interface, request mapping and handlers in `backend/internal/handler/admin/user_handler.go`; use existing `service.APIKeyService` methods with `:id` as the target user ID and preserve their validation and ownership failures.
+- [x] T004 [US1] Add the `ProvideUserHandler` admin Wire provider and regenerate `backend/cmd/server/wire_gen.go` with the injected `APIKeyService`; register GET/POST/PUT/DELETE and group/rate routes in `backend/internal/server/routes/admin.go`, and add non-secret audit action mappings in `backend/internal/server/middleware/audit_log.go`.
 - [x] T005 [US1] Run the focused backend tests green, then `go test ./internal/handler/admin ./internal/handler ./internal/service -count=1` from `backend`. Observed 2026-09-04: focused target-user tests and the requested backend regression command passed.
 
 ## Phase 2: Reusable `/keys` workspace
