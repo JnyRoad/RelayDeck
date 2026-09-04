@@ -340,7 +340,8 @@ relaydeck-bmai/
 
 ## 七、参考资源
 
-- [上游仓库](https://github.com/JnyRoad/RelayDeck)
+- [上游来源仓库](https://github.com/Wei-Shaw/sub2api)
+- [当前维护仓库](https://github.com/JnyRoad/RelayDeck)
 - [Ent 文档](https://entgo.io/docs/getting-started)
 - [Vue3 文档](https://vuejs.org/)
 - [pnpm 文档](https://pnpm.io/)
