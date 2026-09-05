@@ -313,10 +313,11 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 			longContextBillingGate,
 			pricingAt,
 		)
-		if standardErr != nil {
+		if standardErr != nil && !isUsagePricingUnavailableError(standardErr) {
 			return standardErr
 		}
-		if cost != nil && standardCost != nil {
+		// Missing Standard pricing must not discard the baseline zero-cost usage row.
+		if standardErr == nil && cost != nil && standardCost != nil {
 			cost.ActualCost = standardCost.ActualCost
 		}
 	}

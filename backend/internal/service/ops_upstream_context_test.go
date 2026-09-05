@@ -131,6 +131,18 @@ func TestOpsUpstreamProxyFieldAccessors(t *testing.T) {
 			wantName: opsProxyNameUnnamed,
 		},
 		{
+			name:     "managed proxy cannot use unknown sentinel",
+			account:  &Account{ProxyID: &boundID, Proxy: &Proxy{ID: boundID, Name: " unknown "}},
+			wantID:   &boundID,
+			wantName: opsProxyNameUnnamed,
+		},
+		{
+			name:     "managed proxy cannot use direct sentinel",
+			account:  &Account{ProxyID: &boundID, Proxy: &Proxy{ID: boundID, Name: opsProxyNameDirect}},
+			wantID:   &boundID,
+			wantName: opsProxyNameUnnamed,
+		},
+		{
 			name:     "account has no proxy",
 			account:  &Account{},
 			wantName: opsProxyNameDirect,
@@ -212,6 +224,8 @@ func TestNormalizeOpsUpstreamProxyAttributionEnforcesSentinelInvariant(t *testin
 	}{
 		{name: "id with name kept", in: OpsUpstreamErrorEvent{ProxyID: &positive, ProxyName: "eu-1"}, wantID: &positive, wantName: "eu-1"},
 		{name: "id without name gets placeholder", in: OpsUpstreamErrorEvent{ProxyID: &positive}, wantID: &positive, wantName: opsProxyNameUnnamed},
+		{name: "managed unknown sentinel gets placeholder", in: OpsUpstreamErrorEvent{ProxyID: &positive, ProxyName: " unknown "}, wantID: &positive, wantName: opsProxyNameUnnamed},
+		{name: "managed direct sentinel gets placeholder", in: OpsUpstreamErrorEvent{ProxyID: &positive, ProxyName: opsProxyNameDirect}, wantID: &positive, wantName: opsProxyNameUnnamed},
 		{name: "null id with real name collapses to unknown", in: OpsUpstreamErrorEvent{ProxyName: "eu-1"}, wantName: opsProxyNameUnknown},
 		{name: "zero id with real name collapses to unknown", in: OpsUpstreamErrorEvent{ProxyID: &zero, ProxyName: "eu-1"}, wantName: opsProxyNameUnknown},
 		{name: "explicit direct preserved", in: OpsUpstreamErrorEvent{ProxyName: opsProxyNameDirect}, wantName: opsProxyNameDirect},
@@ -274,6 +288,20 @@ func TestNormalizeOpsUpstreamErrorsJSONPreservesUnknownKeysAndOrder(t *testing.T
 	require.Error(t, err)
 	_, err = normalizeOpsUpstreamErrorsJSON(`[not json`)
 	require.Error(t, err)
+}
+
+func TestNormalizeOpsUpstreamErrorsJSONManagedSentinels(t *testing.T) {
+	for _, name := range []string{opsProxyNameUnknown, opsProxyNameDirect} {
+		t.Run(name, func(t *testing.T) {
+			raw := `[{"proxy_id":7,"proxy_name":"` + name + `","legacy_field":"keep"}]`
+			normalized, err := normalizeOpsUpstreamErrorsJSON(raw)
+			require.NoError(t, err)
+			require.JSONEq(t, `[{"proxy_id":7,"proxy_name":"proxy","legacy_field":"keep"}]`, normalized)
+			again, err := normalizeOpsUpstreamErrorsJSON(normalized)
+			require.NoError(t, err)
+			require.Equal(t, normalized, again)
+		})
+	}
 }
 
 func TestParseOpsUpstreamErrorsMarksLegacyProxyAttributionUnknown(t *testing.T) {

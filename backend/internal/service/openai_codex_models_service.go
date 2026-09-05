@@ -31,10 +31,16 @@ var chatgptCodexModelsURL = "https://chatgpt.com/backend-api/codex/models"
 
 const (
 	codexModelsManifestCacheBodyLimit = 1 << 20
+	// codexModelsManifestCacheMaxBytes bounds the combined client and upstream
+	// source bodies retained by the process-wide manifest cache. The per-entry
+	// limit above keeps a single entry bounded; this limit prevents the 512-entry
+	// count ceiling from allowing hundreds of MiB of retained response bodies.
+	codexModelsManifestCacheMaxBytes = 64 << 20
 	// codexModelsManifestCacheMaxEntries 上限按「账号数 × 客户端版本数 × 代理形态」
 	// 估算：缓存同时覆盖 OAuth 与 API Key 账号，且缓存键含 Authorization 与
 	// Version 头，不同客户端版本各自占一条；64 条在大规模部署下会被淘汰导致
-	// 额外上游请求。单条清单通常几十 KB，512 条最坏内存占用在几十 MB 量级。
+	// 额外上游请求。单条清单通常几十 KB，512 条小清单仍可完整保留；总正文
+	// 预算由 codexModelsManifestCacheMaxBytes 另外约束。
 	codexModelsManifestCacheMaxEntries = 512
 	// 三段时效：≤TTL 为新鲜（直接返回缓存，零上游请求）；TTL 到 StaleTTL 之间
 	// 乐观返回旧值并后台单飞刷新（携带上游 ETag，304 续期）；超过 StaleTTL 丢弃
@@ -1467,10 +1473,11 @@ const (
 )
 
 type codexModelsManifestCache struct {
-	mu        sync.Mutex
-	entries   map[string]codexModelsManifestCacheEntry
-	nextOrder uint64
-	refresh   singleflight.Group
+	mu         sync.Mutex
+	entries    map[string]codexModelsManifestCacheEntry
+	totalBytes int64
+	nextOrder  uint64
+	refresh    singleflight.Group
 }
 
 func (c *codexModelsManifestCache) get(key string, now time.Time) (*CodexModelsManifest, codexModelsManifestCacheState) {
@@ -1481,7 +1488,7 @@ func (c *codexModelsManifestCache) get(key string, now time.Time) (*CodexModelsM
 		return nil, codexModelsManifestCacheMiss
 	}
 	if !now.Before(entry.staleUntil) {
-		delete(c.entries, key)
+		c.deleteLocked(key)
 		return nil, codexModelsManifestCacheMiss
 	}
 	if now.Before(entry.expiresAt) {
@@ -1494,8 +1501,8 @@ func (c *codexModelsManifestCache) set(key string, manifest *CodexModelsManifest
 	if manifest == nil || len(manifest.Body) > codexModelsManifestCacheBodyLimit {
 		return
 	}
-	remainingBodyBudget := codexModelsManifestCacheBodyLimit - len(manifest.Body)
-	if len(manifest.upstreamSourceBody) > remainingBodyBudget {
+	entryBytes := codexModelsManifestCacheEntryBytes(manifest)
+	if entryBytes > codexModelsManifestCacheBodyLimit || entryBytes > codexModelsManifestCacheMaxBytes {
 		return
 	}
 	c.mu.Lock()
@@ -1503,22 +1510,24 @@ func (c *codexModelsManifestCache) set(key string, manifest *CodexModelsManifest
 	if c.entries == nil {
 		c.entries = make(map[string]codexModelsManifestCacheEntry)
 	}
-	if _, exists := c.entries[key]; !exists && len(c.entries) >= codexModelsManifestCacheMaxEntries {
-		oldestKey := ""
-		var oldestOrder uint64
-		for candidateKey, entry := range c.entries {
-			if !now.Before(entry.staleUntil) {
-				delete(c.entries, candidateKey)
-				continue
-			}
-			if oldestKey == "" || entry.order < oldestOrder {
-				oldestKey = candidateKey
-				oldestOrder = entry.order
-			}
+	// Remove expired entries before checking either capacity limit so their
+	// bodies no longer count against a later insert.
+	for candidateKey, entry := range c.entries {
+		if !now.Before(entry.staleUntil) {
+			c.deleteLocked(candidateKey)
 		}
-		if len(c.entries) >= codexModelsManifestCacheMaxEntries && oldestKey != "" {
-			delete(c.entries, oldestKey)
+	}
+	// A replacement must release the old entry's bytes before capacity is
+	// evaluated. Invalid or over-budget entries were rejected above, so an
+	// existing value is never lost without a valid replacement being inserted.
+	c.deleteLocked(key)
+	for len(c.entries) >= codexModelsManifestCacheMaxEntries ||
+		c.totalBytes+entryBytes > codexModelsManifestCacheMaxBytes {
+		oldestKey := c.oldestKeyLocked()
+		if oldestKey == "" {
+			return
 		}
+		c.deleteLocked(oldestKey)
 	}
 	c.nextOrder++
 	c.entries[key] = codexModelsManifestCacheEntry{
@@ -1527,6 +1536,35 @@ func (c *codexModelsManifestCache) set(key string, manifest *CodexModelsManifest
 		expiresAt:  now.Add(codexModelsManifestCacheTTL),
 		staleUntil: now.Add(codexModelsManifestCacheStaleTTL),
 	}
+	c.totalBytes += entryBytes
+}
+
+func codexModelsManifestCacheEntryBytes(manifest *CodexModelsManifest) int64 {
+	if manifest == nil {
+		return 0
+	}
+	return int64(len(manifest.Body)) + int64(len(manifest.upstreamSourceBody))
+}
+
+func (c *codexModelsManifestCache) deleteLocked(key string) {
+	entry, ok := c.entries[key]
+	if !ok {
+		return
+	}
+	delete(c.entries, key)
+	c.totalBytes -= codexModelsManifestCacheEntryBytes(entry.manifest)
+}
+
+func (c *codexModelsManifestCache) oldestKeyLocked() string {
+	oldestKey := ""
+	var oldestOrder uint64
+	for key, entry := range c.entries {
+		if oldestKey == "" || entry.order < oldestOrder {
+			oldestKey = key
+			oldestOrder = entry.order
+		}
+	}
+	return oldestKey
 }
 
 // FetchCodexModelsManifest fetches the live Codex models manifest from either

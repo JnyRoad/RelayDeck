@@ -9,6 +9,7 @@ const {
   showWarningMock,
   importCodexSessionMock,
   createOpenAICodexPATMock,
+  createGrokSSOMock,
   authIsSimpleMode,
 } = vi.hoisted(() => ({
   createAccountMock: vi.fn(),
@@ -17,6 +18,7 @@ const {
   showWarningMock: vi.fn(),
   importCodexSessionMock: vi.fn(),
   createOpenAICodexPATMock: vi.fn(),
+  createGrokSSOMock: vi.fn(),
   authIsSimpleMode: { value: true },
 }))
 
@@ -45,6 +47,9 @@ vi.mock('@/api/admin', () => ({
       checkMixedChannelRisk: vi.fn().mockResolvedValue({ has_risk: false }),
       importCodexSession: importCodexSessionMock,
       createOpenAICodexPAT: createOpenAICodexPATMock,
+    },
+    grok: {
+      createFromSSO: createGrokSSOMock,
     },
     settings: {
       getWebSearchEmulationConfig: vi.fn().mockResolvedValue({ enabled: false, providers: [] }),
@@ -83,14 +88,24 @@ const OAuthAuthorizationFlowStub = defineComponent({
     showCodexSessionImportOption: Boolean,
     showAgentIdentityOption: Boolean,
     showCodexPatOption: Boolean,
+    showSsoOption: Boolean,
     initialInputMethod: String,
   },
-  data: () => ({ inputMethod: 'manual' }),
-  emits: ['import-codex-session', 'import-codex-pat'],
+  data: () => ({ inputMethod: 'manual', ssoCookieInput: '' }),
+  emits: ['import-codex-session', 'import-codex-pat', 'import-sso'],
   template: `
     <div>
       <button data-testid="import-codex-session" @click="$emit('import-codex-session', 'session-json')">session</button>
       <button data-testid="import-codex-pat" @click="$emit('import-codex-pat', 'pat-token')">pat</button>
+      <label v-if="showSsoOption">
+        <input v-model="inputMethod" type="radio" value="sso_cookie" data-testid="grok-sso-method" />
+      </label>
+      <textarea v-if="inputMethod === 'sso_cookie'" v-model="ssoCookieInput" data-testid="grok-sso-input" />
+      <button
+        v-if="inputMethod === 'sso_cookie'"
+        data-testid="import-grok-sso"
+        @click="$emit('import-sso', ssoCookieInput)"
+      >sso</button>
     </div>
   `,
 })
@@ -210,6 +225,10 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
       warnings: [],
     })
     createOpenAICodexPATMock.mockReset().mockResolvedValue({})
+    createGrokSSOMock.mockReset().mockResolvedValue({
+      created: [{ id: 43 }],
+      failed: [],
+    })
   })
 
   it('hides only the redundant account toggle when every selected group enables tier pricing', async () => {
@@ -564,5 +583,24 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     await flushPromises()
 
     expect(createOpenAICodexPATMock.mock.calls[0]?.[0]?.extra?.openai_long_context_billing_enabled).toBe(false)
+  })
+
+  it('passes the configured upstream request ID header when saving a Grok SSO import', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'Grok')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Grok SSO account')
+    await wrapper.get('[data-testid="upstream-request-id-header"]').setValue('  X-Grok-Request-Id  ')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+
+    const flow = wrapper.getComponent(OAuthAuthorizationFlowStub)
+    await flow.get('[data-testid="grok-sso-method"]').setValue(true)
+    await flow.get('[data-testid="grok-sso-input"]').setValue('sso-cookie')
+    await flow.get('[data-testid="import-grok-sso"]').trigger('click')
+    await flushPromises()
+
+    expect(createGrokSSOMock).toHaveBeenCalledTimes(1)
+    expect(createGrokSSOMock.mock.calls[0]?.[0]?.extra).toEqual({
+      upstream_request_id_header: 'X-Grok-Request-Id',
+    })
   })
 })

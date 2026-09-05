@@ -77,6 +77,7 @@ func TestMergeCodexModelsManifestBodiesRejectsInvalidInput(t *testing.T) {
 	_, err = mergeCodexModelsManifestBodies([][]byte{[]byte(`{`)})
 	require.Error(t, err)
 
-	_, err = mergeCodexModelsManifestBodies([][]byte{[]byte(`{}`), []byte(`{"models":{}`)})
+	_, err = mergeCodexModelsManifestBodies([][]byte{[]byte(`{}`), []byte(`{"models":{}}`)})
 	require.Error(t, err, "models 非数组必须报错")
+	require.ErrorContains(t, err, "decode codex models manifest models array")
 }

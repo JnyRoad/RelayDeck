@@ -12,3 +12,13 @@
 - [x] Merge into project main and verify ancestry and preserved local changes.
 
 Validation details are recorded in `verification.md` as checks complete.
+
+## PR #12 review follow-up
+
+- [x] Fix validated cache bounds/refresh, pricing, transport attribution, scheduling, and frontend feedback issues.
+- [x] Preserve reasoning-policy fixtures and assert Fast-policy database defaults.
+- [x] Run regression checks and independent review of the repair diff.
+
+Repair delivery and latest-head CI/review outcomes are tracked in the PR #12 timeline.
+
+CLA signatures for upstream historical authors require their own authorization; no signatures or enforcement rules are changed by these repairs.

@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/JnyRoad/RelayDeck/internal/pkg/ctxkey"
 	"github.com/stretchr/testify/require"
@@ -129,6 +130,46 @@ func TestSelectAccountWithLoadAwareness_UpstreamRestrictionIgnoresStickyAccount(
 	require.NotNil(t, result.Account)
 	require.Equal(t, int64(2), result.Account.ID, "粘性账号的上游模型不在定价列表时不得沿用粘性会话")
 	require.Equal(t, int64(2), f.cache.sessionBindings["sticky"], "粘性会话应重新绑定到合规账号")
+}
+
+func TestSelectAccountWithLoadAwareness_ChannelRestrictionMustBeDecisive(t *testing.T) {
+	for _, gate := range []string{"quota", "rpm", "model cooldown", "platform", "unsupported model"} {
+		t.Run(gate, func(t *testing.T) {
+			f := newLoadAwareRestrictionFixture(t, true, nil, nil)
+			accounts := f.svc.accountRepo.(*mockAccountRepoForPlatform).accounts
+			// The allowed alternative is independently unavailable.
+			accounts[1].Schedulable = false
+			switch gate {
+			case "quota":
+				accounts[0].Type = AccountTypeAPIKey
+				accounts[0].Extra = map[string]any{"quota_limit": 1.0, "quota_used": 1.0}
+			case "rpm":
+				accounts[0].Type = AccountTypeOAuth
+				accounts[0].Extra = map[string]any{"base_rpm": 1}
+				f.ctx = context.WithValue(f.ctx, rpmPrefetchContextKey, map[int64]int{1: 100})
+			case "model cooldown":
+				accounts[0].Extra = map[string]any{"model_rate_limits": map[string]any{
+					"claude-fable-5-1": map[string]any{"rate_limit_reset_at": time.Now().Add(time.Hour).Format(time.RFC3339)},
+				}}
+			case "platform":
+				accounts[0].Platform = PlatformOpenAI
+			case "unsupported model":
+				accounts[0].Credentials = map[string]any{"model_mapping": map[string]any{"different-model": "different-model"}}
+			}
+			result, err := f.svc.SelectAccountWithLoadAwareness(f.ctx, &f.groupID, "", "claude-fable-5-1", nil, "", 0)
+			require.Nil(t, result)
+			require.Equal(t, ErrNoAvailableAccounts, err, "a channel restriction must not hide another eligibility failure")
+		})
+	}
+
+	t.Run("otherwise eligible restricted account remains decisive", func(t *testing.T) {
+		f := newLoadAwareRestrictionFixture(t, true, nil, nil)
+		f.svc.accountRepo.(*mockAccountRepoForPlatform).accounts[1].Schedulable = false
+		result, err := f.svc.SelectAccountWithLoadAwareness(f.ctx, &f.groupID, "", "claude-fable-5-1", nil, "", 0)
+		require.Nil(t, result)
+		require.ErrorIs(t, err, ErrNoAvailableAccounts)
+		require.ErrorContains(t, err, "channel pricing restriction")
+	})
 }
 
 func TestSelectAccountWithLoadAwareness_UpstreamRestrictionFiltersRoutedAccounts(t *testing.T) {

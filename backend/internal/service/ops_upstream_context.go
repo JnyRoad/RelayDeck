@@ -412,7 +412,7 @@ type OpsUpstreamErrorEvent struct {
 const (
 	opsProxyNameDirect  = "direct/no_proxy"
 	opsProxyNameUnknown = "unknown"
-	// opsProxyNameUnnamed labels a managed proxy whose name is blank. The
+	// opsProxyNameUnnamed labels a managed proxy whose name is blank or reserved. The
 	// proxies.name column is NOT NULL/non-empty, so this is a defensive value.
 	opsProxyNameUnnamed = "proxy"
 )
@@ -476,11 +476,16 @@ func opsUpstreamProxyAttribution(account *Account) (*int64, string) {
 		return nil, opsProxyNameUnknown
 	}
 	proxyID := account.Proxy.ID
-	name := strings.TrimSpace(account.Proxy.Name)
-	if name == "" {
-		name = opsProxyNameUnnamed
+	return &proxyID, opsManagedProxyName(account.Proxy.Name)
+}
+
+// opsManagedProxyName keeps user-defined proxy names distinct from route sentinels.
+func opsManagedProxyName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" || name == opsProxyNameUnknown || name == opsProxyNameDirect {
+		return opsProxyNameUnnamed
 	}
-	return &proxyID, name
+	return name
 }
 
 func opsUpstreamProxyID(account *Account) *int64 {
@@ -526,9 +531,7 @@ func normalizeOpsUpstreamProxyAttribution(ev *OpsUpstreamErrorEvent) {
 	}
 	ev.ProxyName = strings.TrimSpace(ev.ProxyName)
 	if ev.ProxyID != nil {
-		if ev.ProxyName == "" {
-			ev.ProxyName = opsProxyNameUnnamed
-		}
+		ev.ProxyName = opsManagedProxyName(ev.ProxyName)
 		return
 	}
 	// Invariant: proxy_id == null implies a sentinel name. Any other name
@@ -622,8 +625,8 @@ func normalizeOpsUpstreamErrorsJSON(raw string) (string, error) {
 		var err error
 		switch {
 		case hasValidID:
-			if proxyName == "" {
-				out, err = sjson.Set(out, prefix+"proxy_name", opsProxyNameUnnamed)
+			if name := opsManagedProxyName(proxyName); name != ev.Get("proxy_name").String() {
+				out, err = sjson.Set(out, prefix+"proxy_name", name)
 			}
 		case proxyName == opsProxyNameDirect:
 			if !proxyID.Exists() || proxyID.Type != gjson.Null {

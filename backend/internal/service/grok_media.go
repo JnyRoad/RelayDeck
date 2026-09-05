@@ -874,7 +874,7 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 	// (same path as status polling). Pending snapshot is merged in the handler.
 	result := &OpenAIForwardResult{
 		RequestID:       contentRequestID,
-		UpstreamHeaders: contentResp.Header,
+		UpstreamHeaders: mergeGrokMediaUpstreamHeaders(statusResp.Header, contentResp.Header),
 		ResponseHeaders: contentResp.Header.Clone(),
 		Duration:        time.Since(startTime),
 	}
@@ -888,6 +888,19 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 		result.VideoDurationSeconds = billed.VideoDurationSeconds
 	}
 	return result, nil
+}
+
+func mergeGrokMediaUpstreamHeaders(statusHeaders, contentHeaders http.Header) http.Header {
+	merged := make(http.Header, len(statusHeaders)+len(contentHeaders))
+	for key, values := range statusHeaders {
+		merged[http.CanonicalHeaderKey(key)] = append([]string(nil), values...)
+	}
+	for key, values := range contentHeaders {
+		// Content headers are applied last so the bytes-serving response wins
+		// when status and content responses share a header name.
+		merged[http.CanonicalHeaderKey(key)] = append([]string(nil), values...)
+	}
+	return merged
 }
 
 func grokMediaSignedVideoContentURL(body []byte, requestID string) (string, error) {

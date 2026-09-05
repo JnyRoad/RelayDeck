@@ -3368,19 +3368,26 @@ func TestFetchCodexModelsManifestOAuthStaleServesOldValueAndRefreshesInBackgroun
 
 	close(release)
 	deadline := time.Now().Add(time.Second)
+	fresh := false
 	for time.Now().Before(deadline) {
-		manifest, fetchErr := s.FetchCodexModelsManifest(context.Background(), account, "0.137.0", "")
-		if fetchErr == nil && manifest != nil && !manifest.NotModified {
-			require.Contains(t, string(manifest.Body), `"new"`)
-		}
 		s.codexModelsManifestCache.mu.Lock()
-		fresh := len(s.codexModelsManifestCache.entries) > 0
+		fresh = false
+		for _, entry := range s.codexModelsManifestCache.entries {
+			if time.Now().Before(entry.expiresAt) {
+				fresh = true
+				break
+			}
+		}
 		s.codexModelsManifestCache.mu.Unlock()
 		if fresh {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	require.True(t, fresh, "后台刷新必须更新缓存 expiresAt")
+	manifest, fetchErr := s.FetchCodexModelsManifest(context.Background(), account, "0.137.0", "")
+	require.NoError(t, fetchErr)
+	require.Contains(t, string(manifest.Body), `"new"`)
 	require.EqualValues(t, 2, calls.Load(), "后台刷新必须单飞")
 }
 

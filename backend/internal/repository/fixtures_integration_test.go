@@ -93,6 +93,8 @@ func mustCreateGroup(t *testing.T, client *dbent.Client, g *service.Group) *serv
 		SetForceOpenaiFast(g.ForceOpenAIFast).
 		SetFreeOpenaiFast(g.FreeOpenAIFast).
 		SetCodexModelsManifestConfig(g.CodexModelsManifestConfig).
+		SetMaxReasoningEffort(g.MaxReasoningEffort).
+		SetMaxReasoningEffortOverLimit(g.MaxReasoningEffortOverLimit).
 		SetProfitControlEnabled(g.ProfitControlEnabled).
 		SetProfitMinMargin(g.ProfitMinMargin).
 		SetProfitSafetyBuffer(g.ProfitSafetyBuffer)

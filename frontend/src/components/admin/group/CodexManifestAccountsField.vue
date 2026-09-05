@@ -32,7 +32,6 @@
 
     <div v-if="config.enabled">
       <p
-        v-if="config.enabled"
         class="mb-2 text-xs text-gray-500 dark:text-gray-400"
       >
         {{ t("admin.groups.codexModelsManifest.enabledHint") }}

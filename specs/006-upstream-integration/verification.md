@@ -109,3 +109,85 @@ Dependency and lockfile updates are not part of this merge.
 - All five deployment-file SHA-256 values match their pre-integration values.
 - Upstream deletion of two old sponsor images is included; their original
   contents remain recoverable from the baseline Git commit.
+
+## PR #12 review repairs (2026-09-05)
+
+The review baseline is `aba5e3516448d40be9e0caa2d706459b43dd8c9e` on
+`chore/integrate-upstream-20260905`. Repairs use an isolated worktree; local
+`main` and its five deployment edits are not changed.
+
+The review contains 12 inline findings, two outside-diff findings, and one
+redundant-condition cleanup. The follow-up is restricted to those findings and
+their regression coverage. Runtime fixes preserve the existing public API,
+schema, lockfiles, upstream history, and local WebSocket replacement.
+
+- Channel-pricing failure attribution now counts only accounts passing the
+  other eligibility gates. Mixed RPM/model-cooldown regressions failed before
+  the fix; quota, platform, and model-support exclusions are also covered.
+- Managed proxy names colliding with `unknown` or `direct/no_proxy` use the
+  existing `proxy` label in event snapshots and legacy JSON reads. IDs and stored
+  proxy names are retained; no new proxy-name validation policy or data migration
+  is introduced. Both collision cases failed before the fix.
+- Group fixtures now save both reasoning-effort policy fields. A PostgreSQL
+  round-trip failed before the fix; the full group repository suite and relevant
+  auth projections pass after it. Schema checks also assert both Fast flags
+  default to false.
+- Grok video-content usage combines status and content headers (content wins);
+  Gemini's HTTP retry-exhausted `countTokens` estimate preserves request ID and
+  response headers. The separate transport-error fallback is unchanged.
+- Free Fast treats unavailable Standard pricing as recoverable and keeps the
+  baseline usage record, while other pricing errors still propagate.
+- The one-hour channel-price finding is not a production defect:
+  `applyChannelTokenPriceOverrides` already copies `CacheWrite1hPrice` into
+  `CacheCreation1hPrice`, and the resolver calls that helper. A new regression
+  checks both resolved pricing and calculated cost and passed without changing
+  pricing production code. No redundant assignment was added.
+- Codex manifest cache bodies now have a 64 MiB aggregate budget alongside the
+  existing combined per-entry 1 MiB limit and 512-entry cap. Tests cover byte
+  accounting on insert, replacement, expiry, and oldest-entry eviction. The
+  refresh test waits for a fresh expiry without dispatching extra requests; the
+  malformed fixture now reaches and asserts the non-array error path.
+- WebSocket pending requests count as active before `response.created`; early
+  upstream EOF fails instead of reporting a completed relay. Existing adapter
+  error-close handling is retained. Non-request binary-frame tests use a
+  session-level payload so transport observation is tested independently.
+- Frontend identifier-copy feedback includes identifier type as well as value;
+  Grok SSO import passes the configured request-ID header in `extra`. The
+  redundant manifest enabled-hint condition is removed without styling changes.
+
+Fresh repair validation:
+
+| Check | Result |
+| --- | --- |
+| PostgreSQL group suite, relevant API-Key auth projections, schema/default assertions | Passed (`CI=1`, disposable PostgreSQL/Redis only) |
+| Frontend full Vitest | Passed, 258 files / 1,870 tests |
+| Frontend full lint and production build (including type check) | Passed |
+| WebSocket relay full race suite | Passed, 7.183s |
+| Pre-fix combined service regression | 54 passed, 3 expected failures: Gemini attribution, Grok attribution, and Free Fast missing-price usage |
+| Final full backend unit suite | Passed, 18,239 passing test/subtest events, 0 failures, 24 skips; service package 199.987s |
+| Independent repair review (two bounded passes) | No actionable findings in the final repair diff |
+
+Reproducible backend command:
+`GOMAXPROCS=2 GOMEMLIMIT=2GiB go test -json -p 2 -gcflags='github.com/JnyRoad/RelayDeck/internal/service=-l' -tags=unit ./...`.
+Default-compiler static checks and latest-head GitHub results are reported in
+the PR timeline; the local regression result does not substitute for those checks.
+
+The first service regression attempts exposed a new test's incorrect stub field
+and an unrelated missing 429 persistence dependency. The test now uses a 503
+response to exercise the same HTTP retry-exhaustion branch without invoking
+rate-limit persistence. Failed or stopped runs are not passing evidence. Local
+service regression compilation disables inlining for that package only to
+reduce memory pressure; source, assertions, and CI compiler settings are unchanged.
+
+### External-check boundary
+
+The initial PR checks passed for backend tests/lint/security, frontend
+tests/lint/typecheck/build/security, and shell checks. CLA failed because 12
+historical upstream commit authors have not signed this repository's agreement;
+the PR author's signature is already recognized. This repair does not sign on
+anyone's behalf or modify CLA enforcement. CodeRabbit's docstring-coverage
+warning is advisory and does not justify unrelated comment churn.
+
+No production deployment, live-provider call, browser acceptance, or PR merge is
+performed by this review repair. Any new CI result must be checked against the
+repair's latest SHA rather than the original integration SHA.

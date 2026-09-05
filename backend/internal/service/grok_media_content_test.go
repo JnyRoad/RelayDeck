@@ -272,6 +272,40 @@ func TestForwardGrokMediaContentRejectsUntrustedSignedURL(t *testing.T) {
 	require.Len(t, upstream.requests, 1)
 }
 
+func TestForwardGrokMediaContentPreservesStatusHeaderForUsageAttribution(t *testing.T) {
+	status := grokMediaContentStatusResponse(`{"status":"completed"}`)
+	status.Header.Set("X-Relay-Request-ID", "status-only-request-id")
+	status.Header.Set("X-Shared-Header", "status-value")
+	content := &http.Response{
+		StatusCode: http.StatusOK,
+		Header: http.Header{
+			"Content-Type":    []string{"video/mp4"},
+			"X-Shared-Header": []string{"content-value"},
+		},
+		Body: io.NopCloser(strings.NewReader("video-payload")),
+	}
+	upstream := &grokMediaContentUpstreamStub{responses: []*http.Response{status, content}}
+	account := grokMediaContentTestAccount()
+	account.Extra = map[string]any{
+		AccountExtraUpstreamRequestIDHeader: "X-Relay-Request-ID",
+	}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	c, _ := grokMediaContentTestContext(http.MethodGet, "https://api.example/v1/videos/task-1/content", nil)
+
+	result, err := svc.ForwardGrokMedia(
+		context.Background(), c, account,
+		GrokMediaEndpointVideoContent, "task-1", nil, "",
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "status-only-request-id", result.UpstreamHeaders.Get("X-Relay-Request-ID"))
+	require.Equal(t, "content-value", result.UpstreamHeaders.Get("X-Shared-Header"), "content headers win on conflicts")
+	upstreamRequestID := usageUpstreamRequestIDPtr(account, result.UpstreamHeaders, false)
+	require.NotNil(t, upstreamRequestID, "status-only custom header must reach usage attribution")
+	require.Equal(t, "status-only-request-id", *upstreamRequestID)
+}
+
 func TestGrokMediaSignedVideoContentURLRejectsDeceptiveOrigins(t *testing.T) {
 	for _, rawURL := range []string{
 		"https://vidgen.x.ai.attacker.invalid/video.mp4",

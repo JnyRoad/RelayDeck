@@ -1427,13 +1427,14 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 				estimated := estimateGeminiCountTokens(body)
 				c.JSON(http.StatusOK, map[string]any{"totalTokens": estimated})
 				return &ForwardResult{
-					RequestID:     "",
-					Usage:         ClaudeUsage{},
-					Model:         originalModel,
-					UpstreamModel: mappedModel,
-					Stream:        false,
-					Duration:      time.Since(startTime),
-					FirstTokenMs:  nil,
+					RequestID:       firstNonEmpty(resp.Header.Get(requestIDHeader), resp.Header.Get("x-goog-request-id")),
+					UpstreamHeaders: resp.Header,
+					Usage:           ClaudeUsage{},
+					Model:           originalModel,
+					UpstreamModel:   mappedModel,
+					Stream:          false,
+					Duration:        time.Since(startTime),
+					FirstTokenMs:    nil,
 				}, nil
 			}
 			// Final attempt: surface the upstream error body (passed through below) instead of a generic retry error.

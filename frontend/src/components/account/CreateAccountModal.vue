@@ -5928,6 +5928,7 @@ const handleGrokImportSSO = async (ssoInput: string) => {
       priority: form.priority,
       rate_multiplier: form.rate_multiplier,
       expires_at: form.expires_at,
+      extra: withUpstreamRequestIdHeader({}),
       auto_pause_on_expired: autoPauseOnExpired.value
     })
 

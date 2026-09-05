@@ -49,6 +49,18 @@ func TestGroupRepoSuite(t *testing.T) {
 
 // --- Create / GetByID / Update / Delete ---
 
+func (s *GroupRepoSuite) TestFixturePreservesReasoningPolicy() {
+	group := mustCreateGroup(s.T(), s.tx.Client(), &service.Group{
+		Name: "fixture-reasoning-policy", Platform: service.PlatformOpenAI,
+		RateMultiplier: 1, MaxReasoningEffort: "medium",
+		MaxReasoningEffortOverLimit: service.ReasoningEffortOverLimitDeny,
+	})
+	got, err := s.repo.GetByID(s.ctx, group.ID)
+	s.Require().NoError(err)
+	s.Require().Equal("medium", got.MaxReasoningEffort)
+	s.Require().Equal(service.ReasoningEffortOverLimitDeny, got.MaxReasoningEffortOverLimit)
+}
+
 func (s *GroupRepoSuite) TestCreate() {
 	group := &service.Group{
 		Name:             "test-create",

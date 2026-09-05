@@ -32,7 +32,8 @@ The two sentinel names have strict meanings:
 
 Invariant: `proxy_id` is `null` if and only if `proxy_name` is one of the two
 sentinels. A managed proxy with a blank name (defensive only; `proxies.name` is
-non-empty) is labeled `proxy`. Both the struct normalizer used at append time
+non-empty) or a name colliding with either sentinel is labeled `proxy`, preserving
+its durable ID without renaming the stored proxy. Both the struct normalizer used at append time
 and the JSON normalizer used on detail reads enforce this, so an event can never
 carry `proxy_id=null` together with a real proxy name.
 

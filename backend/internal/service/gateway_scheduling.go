@@ -671,10 +671,6 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		if requestedModel != "" && !s.isModelSupportedByAccountWithContext(ctx, acc, requestedModel) {
 			continue
 		}
-		if isChannelRestricted(acc) {
-			channelRestrictedCount++
-			continue
-		}
 		if !s.isAccountSchedulableForModelSelection(ctx, acc, requestedModel) {
 			continue
 		}
@@ -688,6 +684,11 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		}
 		// RPM 检查（非粘性会话路径）
 		if !s.isAccountSchedulableForRPM(ctx, acc, false) {
+			continue
+		}
+		// Attribute failure to channel pricing only for otherwise eligible accounts.
+		if isChannelRestricted(acc) {
+			channelRestrictedCount++
 			continue
 		}
 		candidates = append(candidates, acc)
