@@ -62,7 +62,7 @@
 | Frontend `vitest run --silent --maxWorkers=2 --minWorkers=2` | Final rerun passed, 258 files / 1,868 tests |
 | Frontend `npx --yes pnpm@9 run lint:check` and `run build` | Final rerun passed, including TypeScript check |
 | Independent integration review and focused re-review | Completed; one P1 reactive-binding issue fixed and independently confirmed closed |
-| Local main fast-forward and final preservation checks | Pending |
+| Local main fast-forward and final preservation checks | Passed; merge `de30f7f93bba46d05857ddcfe34748d0e90dfee4`, 0 missing commits through the frozen upstream tip |
 
 Database integration ran only against disposable PostgreSQL/Redis containers.
 The added upgrade test reconstructs the old RelayDeck schema, seeds API Key
@@ -94,3 +94,18 @@ Dependency and lockfile updates are not part of this merge.
 - The primary checkout's three modified deployment files and two untracked
   deployment files remain outside the integration commit and must retain their
   pre-integration SHA-256 hashes.
+
+## Post-merge evidence
+
+- Local main fast-forwarded to the reviewed two-parent merge commit
+  `de30f7f93bba46d05857ddcfe34748d0e90dfee4`.
+- `git merge-base --is-ancestor 07bf8b92fda067516b7989412f09b75bb39bc113 HEAD`
+  succeeded; `git rev-list --count HEAD..07bf8b92fda067516b7989412f09b75bb39bc113`
+  returned `0`.
+- The merged `backend` and `frontend` trees are identical to the validated
+  integration branch. The original deployment changes remain unstaged/untracked.
+- Post-merge `GOMAXPROCS=2 go test -tags=unit ./migrations` passed in the main
+  checkout without accessing any database.
+- All five deployment-file SHA-256 values match their pre-integration values.
+- Upstream deletion of two old sponsor images is included; their original
+  contents remain recoverable from the baseline Git commit.

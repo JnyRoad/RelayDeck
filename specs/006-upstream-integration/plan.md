@@ -17,6 +17,6 @@
 
 ## Rollback
 
-Before publication, main remains at the baseline. After source integration,
+Before source integration, main remains at the baseline. After the local merge,
 reverting the merge restores the previous source behavior. No production
 database changes are performed by this workflow.
