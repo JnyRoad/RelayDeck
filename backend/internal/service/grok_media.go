@@ -739,6 +739,7 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 	}
 	return &OpenAIForwardResult{
 		RequestID:            requestIDHeader,
+		UpstreamHeaders:      resp.Header,
 		ResponseID:           usage.ResponseID,
 		Usage:                usage.Usage,
 		Model:                resultModel,
@@ -873,6 +874,7 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 	// (same path as status polling). Pending snapshot is merged in the handler.
 	result := &OpenAIForwardResult{
 		RequestID:       contentRequestID,
+		UpstreamHeaders: mergeGrokMediaUpstreamHeaders(statusResp.Header, contentResp.Header),
 		ResponseHeaders: contentResp.Header.Clone(),
 		Duration:        time.Since(startTime),
 	}
@@ -886,6 +888,19 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 		result.VideoDurationSeconds = billed.VideoDurationSeconds
 	}
 	return result, nil
+}
+
+func mergeGrokMediaUpstreamHeaders(statusHeaders, contentHeaders http.Header) http.Header {
+	merged := make(http.Header, len(statusHeaders)+len(contentHeaders))
+	for key, values := range statusHeaders {
+		merged[http.CanonicalHeaderKey(key)] = append([]string(nil), values...)
+	}
+	for key, values := range contentHeaders {
+		// Content headers are applied last so the bytes-serving response wins
+		// when status and content responses share a header name.
+		merged[http.CanonicalHeaderKey(key)] = append([]string(nil), values...)
+	}
+	return merged
 }
 
 func grokMediaSignedVideoContentURL(body []byte, requestID string) (string, error) {
@@ -1239,6 +1254,8 @@ func (s *OpenAIGatewayService) handleGrokMediaErrorResponse(
 	if isGrokContentPolicyRejection(resp.StatusCode, body) {
 		clientMsg := grokContentPolicyClientMessage(body)
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			ProxyID:            opsUpstreamProxyID(account),
+			ProxyName:          opsUpstreamProxyName(account),
 			Platform:           account.Platform,
 			AccountID:          account.ID,
 			AccountName:        account.Name,
@@ -1269,6 +1286,8 @@ func (s *OpenAIGatewayService) handleGrokMediaErrorResponse(
 
 	if !account.ShouldHandleErrorCode(resp.StatusCode) {
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			ProxyID:            opsUpstreamProxyID(account),
+			ProxyName:          opsUpstreamProxyName(account),
 			Platform:           account.Platform,
 			AccountID:          account.ID,
 			AccountName:        account.Name,
@@ -1288,6 +1307,8 @@ func (s *OpenAIGatewayService) handleGrokMediaErrorResponse(
 		kind = "failover"
 	}
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+		ProxyID:            opsUpstreamProxyID(account),
+		ProxyName:          opsUpstreamProxyName(account),
 		Platform:           account.Platform,
 		AccountID:          account.ID,
 		AccountName:        account.Name,

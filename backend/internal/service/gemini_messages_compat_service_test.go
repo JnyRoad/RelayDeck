@@ -19,10 +19,11 @@ import (
 )
 
 type geminiCompatHTTPUpstreamStub struct {
-	response *http.Response
-	err      error
-	calls    int
-	lastReq  *http.Request
+	response  *http.Response
+	responses []*http.Response
+	err       error
+	calls     int
+	lastReq   *http.Request
 }
 
 func (s *geminiCompatHTTPUpstreamStub) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
@@ -30,6 +31,11 @@ func (s *geminiCompatHTTPUpstreamStub) Do(req *http.Request, proxyURL string, ac
 	s.lastReq = req
 	if s.err != nil {
 		return nil, s.err
+	}
+	if len(s.responses) > 0 {
+		resp := s.responses[0]
+		s.responses = s.responses[1:]
+		return resp, nil
 	}
 	if s.response == nil {
 		return nil, fmt.Errorf("missing stub response")
@@ -970,6 +976,48 @@ func TestEstimateGeminiCountTokens(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGeminiForwardNativeCountTokensFallbackPreservesRequestAttribution(t *testing.T) {
+	responses := make([]*http.Response, geminiMaxRetries)
+	for i := range responses {
+		responses[i] = &http.Response{
+			StatusCode: http.StatusServiceUnavailable,
+			Header: http.Header{
+				"Content-Type":      []string{"application/json"},
+				"X-Goog-Request-Id": []string{"count-tokens-fallback-request"},
+				"X-Retry-Marker":    []string{"preserve-me"},
+			},
+			Body: io.NopCloser(strings.NewReader(`{"error":{"message":"temporarily unavailable"}}`)),
+		}
+	}
+	upstream := &geminiCompatHTTPUpstreamStub{responses: responses}
+	svc := &GeminiMessagesCompatService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{},
+	}
+	account := &Account{
+		ID:       401,
+		Platform: PlatformGemini,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "gemini-api-key",
+			"base_url": "https://generativelanguage.googleapis.com",
+		},
+	}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	body := []byte(`{"contents":[{"parts":[{"text":"count this"}]}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.5-flash:countTokens", bytes.NewReader(body))
+
+	result, err := svc.ForwardNative(context.Background(), c, account, "gemini-2.5-flash", "countTokens", false, body)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "count-tokens-fallback-request", result.RequestID, "countTokens fallback must preserve x-goog-request-id")
+	require.Equal(t, "preserve-me", result.UpstreamHeaders.Get("X-Retry-Marker"))
+	require.Equal(t, "count-tokens-fallback-request", result.UpstreamHeaders.Get("X-Goog-Request-Id"))
+	require.Equal(t, http.StatusOK, recorder.Code)
 }
 
 // ---------------------------------------------------------------------------

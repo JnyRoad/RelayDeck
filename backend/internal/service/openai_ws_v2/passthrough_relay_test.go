@@ -41,6 +41,11 @@ type closeSpyFrameConn struct {
 	closeCalls atomic.Int32
 }
 
+type eofReplacementFrameConn struct {
+	FrameConn
+	err error
+}
+
 type cancelJoinProbeFrameConn struct {
 	readStarted  chan struct{}
 	readCanceled chan struct{}
@@ -63,6 +68,14 @@ func newPassthroughTestFrameConn(frames []passthroughTestFrame, autoClose bool) 
 		close(c.readCh)
 	}
 	return c
+}
+
+func (c *eofReplacementFrameConn) ReadFrame(ctx context.Context) (coderws.MessageType, []byte, error) {
+	msgType, payload, err := c.FrameConn.ReadFrame(ctx)
+	if errors.Is(err, io.EOF) {
+		return msgType, payload, c.err
+	}
+	return msgType, payload, err
 }
 
 func (c *passthroughTestFrameConn) ReadFrame(ctx context.Context) (coderws.MessageType, []byte, error) {
@@ -284,7 +297,7 @@ func TestRelay_FunctionCallOutputBytesPreserved(t *testing.T) {
 	require.Equal(t, firstPayload, upstreamWrites[0].payload)
 }
 
-func TestRelay_UpstreamDisconnect(t *testing.T) {
+func TestRelay_UpstreamDisconnectBeforeResponseCreatedIsFailure(t *testing.T) {
 	t.Parallel()
 
 	// 上游立即关闭（EOF），客户端不发送额外帧
@@ -296,9 +309,62 @@ func TestRelay_UpstreamDisconnect(t *testing.T) {
 	defer cancel()
 
 	result, relayExit := Relay(ctx, clientConn, upstreamConn, firstPayload, RelayOptions{})
-	// 上游 EOF 属于 disconnect，标记为 graceful
-	require.Nil(t, relayExit, "上游 EOF 应被视为 graceful disconnect")
+	// response.create 已经启动一个 Responses turn；即使 response.created 尚未到达，
+	// 上游的 clean EOF 也不能被当作成功完成。
+	require.NotNil(t, relayExit, "active response.create 后的上游 EOF 应是失败")
+	require.Equal(t, "read_upstream", relayExit.Stage)
+	require.False(t, relayExit.Graceful)
+	require.ErrorContains(t, relayExit.Err, "upstream websocket closed before terminal event")
 	require.Equal(t, "gpt-4o", result.RequestModel)
+	require.Empty(t, result.TerminalEventType)
+}
+
+func TestRelay_UpstreamCleanCloseWithoutResponseRequestIsGraceful(t *testing.T) {
+	t.Parallel()
+
+	clientConn := newPassthroughTestFrameConn(nil, false)
+	upstreamConn := newPassthroughTestFrameConn(nil, true)
+
+	// 会话级消息不是 response.create，因此没有活动 Responses turn。
+	firstPayload := []byte(`{"type":"session.update","session":{}}`)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	result, relayExit := Relay(ctx, clientConn, upstreamConn, firstPayload, RelayOptions{})
+	require.Nil(t, relayExit, "没有 response 请求时的 clean close 应保持 graceful")
+	require.Empty(t, result.RequestID)
+}
+
+func TestRelay_UpstreamNormalCloseBeforeTerminalIsFailure(t *testing.T) {
+	t.Parallel()
+
+	clientConn := newPassthroughTestFrameConn(nil, false)
+	upstreamConn := &eofReplacementFrameConn{
+		FrameConn: newPassthroughTestFrameConn([]passthroughTestFrame{
+			{
+				msgType: coderws.MessageText,
+				payload: []byte(`{"type":"response.created","response":{"id":"resp_incomplete","status":"in_progress"}}`),
+			},
+			{
+				msgType: coderws.MessageText,
+				payload: []byte(`{"type":"response.in_progress","response":{"id":"resp_incomplete","status":"in_progress"}}`),
+			},
+		}, true),
+		err: coderws.CloseError{Code: coderws.StatusNormalClosure},
+	}
+
+	firstPayload := []byte(`{"type":"response.create","model":"gpt-5.6-sol","input":[]}`)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	result, relayExit := Relay(ctx, clientConn, upstreamConn, firstPayload, RelayOptions{})
+	require.NotNil(t, relayExit)
+	require.Equal(t, "read_upstream", relayExit.Stage)
+	require.False(t, relayExit.Graceful)
+	require.True(t, relayExit.WroteDownstream)
+	require.ErrorContains(t, relayExit.Err, "upstream websocket closed before terminal event")
+	require.Empty(t, result.TerminalEventType)
+	require.Len(t, clientConn.Writes(), 2)
 }
 
 func TestRelay_ClientDisconnect(t *testing.T) {
@@ -871,7 +937,7 @@ func TestRelay_BinaryFramePassthrough(t *testing.T) {
 		},
 	}, true)
 
-	firstPayload := []byte(`{"type":"response.create","model":"gpt-4o","input":[]}`)
+	firstPayload := []byte(`{"type":"session.update","session":{}}`)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -897,7 +963,7 @@ func TestRelay_BinaryJSONFrameSkipsObservation(t *testing.T) {
 		},
 	}, true)
 
-	firstPayload := []byte(`{"type":"response.create","model":"gpt-4o","input":[]}`)
+	firstPayload := []byte(`{"type":"session.update","session":{}}`)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -943,7 +1009,7 @@ func TestRelay_PreservesFirstMessageType(t *testing.T) {
 	clientConn := newPassthroughTestFrameConn(nil, false)
 	upstreamConn := newPassthroughTestFrameConn(nil, true)
 
-	firstPayload := []byte(`{"type":"response.create","model":"gpt-4o","input":[]}`)
+	firstPayload := []byte(`{"type":"session.update","session":{}}`)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 

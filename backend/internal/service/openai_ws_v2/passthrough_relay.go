@@ -533,17 +533,26 @@ func runUpstreamToClient(
 		msgType, payload, err := upstreamConn.ReadFrame(ctx)
 		if err != nil {
 			emitTurnComplete(onTurnComplete, state, finalizePendingBareError(state, nowFn()))
+			graceful := isDisconnectError(err)
+			// A clean WebSocket close only describes the transport handshake. Once
+			// the upstream has started a Responses turn, success still requires a
+			// terminal protocol event. Treat an early 1000/EOF as a relay failure so
+			// the adapter does not report relay_completed with an active turn.
+			if graceful && openAIWSRelayHasActiveTurn(state) {
+				graceful = false
+				err = errors.New("upstream websocket closed before terminal event: " + err.Error())
+			}
 			emitRelayTrace(onTrace, RelayTraceEvent{
 				Stage:           "read_upstream_failed",
 				Direction:       "upstream_to_client",
 				Error:           err.Error(),
-				Graceful:        isDisconnectError(err),
+				Graceful:        graceful,
 				WroteDownstream: wroteDownstream,
 			})
 			exitCh <- relayExitSignal{
 				stage:           "read_upstream",
 				err:             err,
-				graceful:        isDisconnectError(err),
+				graceful:        graceful,
 				wroteDownstream: wroteDownstream,
 			}
 			return
@@ -1024,6 +1033,16 @@ func openAIWSRelayActiveTurnID(state *relayState) string {
 		}
 	}
 	return ""
+}
+
+func openAIWSRelayHasActiveTurn(state *relayState) bool {
+	if state == nil {
+		return false
+	}
+	// response.create is recorded before response.created supplies a response ID.
+	// Keep that pending turn active so a clean transport EOF cannot be mistaken
+	// for a successful close during this protocol gap.
+	return openAIWSRelayActiveTurnID(state) != "" || state.pendingTurnStart.Load() != nil
 }
 
 func openAIWSRelayCloneIntPtr(v *int) *int {
