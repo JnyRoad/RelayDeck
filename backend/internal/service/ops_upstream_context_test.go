@@ -304,6 +304,28 @@ func TestNormalizeOpsUpstreamErrorsJSONManagedSentinels(t *testing.T) {
 	}
 }
 
+func TestNormalizeOpsUpstreamErrorsJSONRejectsInvalidProxyIDs(t *testing.T) {
+	for _, rawID := range []string{"1.5", "1e3", "9223372036854775808", "18446744073709551617", "-1", "0", `"7"`} {
+		t.Run(rawID, func(t *testing.T) {
+			raw := `[{"proxy_id":` + rawID + `,"proxy_name":"managed","legacy_field":"keep"}]`
+			normalized, err := normalizeOpsUpstreamErrorsJSON(raw)
+			require.NoError(t, err)
+			require.JSONEq(t, `[{"proxy_id":null,"proxy_name":"unknown","legacy_field":"keep"}]`, normalized)
+			_, err = ParseOpsUpstreamErrors(normalized)
+			require.NoError(t, err, "normalized IDs must satisfy the int64 contract")
+		})
+	}
+	t.Run("maximum int64 remains exact", func(t *testing.T) {
+		raw := `[{"proxy_id":9223372036854775807,"proxy_name":"managed"}]`
+		normalized, err := normalizeOpsUpstreamErrorsJSON(raw)
+		require.NoError(t, err)
+		require.Equal(t, raw, normalized)
+		events, err := ParseOpsUpstreamErrors(normalized)
+		require.NoError(t, err)
+		require.Equal(t, int64(9223372036854775807), *events[0].ProxyID)
+	})
+}
+
 func TestParseOpsUpstreamErrorsMarksLegacyProxyAttributionUnknown(t *testing.T) {
 	events, err := ParseOpsUpstreamErrors(`[{"account_id":42,"account_name":"legacy","kind":"http_error"}]`)
 	require.NoError(t, err)

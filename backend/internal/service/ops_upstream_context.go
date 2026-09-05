@@ -621,7 +621,8 @@ func normalizeOpsUpstreamErrorsJSON(raw string) (string, error) {
 		prefix := strconv.Itoa(i) + "."
 		proxyID := ev.Get("proxy_id")
 		proxyName := strings.TrimSpace(ev.Get("proxy_name").String())
-		hasValidID := proxyID.Exists() && proxyID.Type == gjson.Number && proxyID.Int() > 0
+		parsedProxyID, parseIDErr := strconv.ParseInt(proxyID.Raw, 10, 64)
+		hasValidID := proxyID.Type == gjson.Number && parseIDErr == nil && parsedProxyID > 0
 		var err error
 		switch {
 		case hasValidID:

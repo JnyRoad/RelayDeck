@@ -191,3 +191,20 @@ warning is advisory and does not justify unrelated comment churn.
 No production deployment, live-provider call, browser acceptance, or PR merge is
 performed by this review repair. Any new CI result must be checked against the
 repair's latest SHA rather than the original integration SHA.
+
+### Strict proxy-ID follow-up
+
+CodeRabbit's review of `4e4e3c341` found that `gjson.Result.Int()` could retain
+fractional or overflowing proxy IDs in legacy JSON. Validation now parses the
+raw JSON number with `strconv.ParseInt(..., 10, 64)` and requires a positive
+result with no error. Non-direct invalid attribution becomes `null`/`unknown`;
+explicit direct attribution and unrelated legacy fields remain unchanged.
+
+The new regression reproduced failures for `1.5`, `1e3`, and
+`18446744073709551617` before the fix. It also covers the signed overflow
+boundary, negative/zero/string IDs, and exact preservation of the maximum
+valid `int64`. After the fix, the full selected upstream-attribution/detail-read
+regression range passed: 44 test/subtest events, zero failures, zero skips.
+Command: `GOMAXPROCS=2 GOMEMLIMIT=2GiB go test -json -gcflags='github.com/JnyRoad/RelayDeck/internal/service=-l' -tags=unit ./internal/service -run 'Test.*OpsUpstream|TestNormalizeOpsUpstream|TestOpsServiceGetErrorLogByID' -count=1`.
+Independent read-only review found no actionable issue in this follow-up.
+Latest-head CI and remote review outcomes remain tracked in the PR timeline.
